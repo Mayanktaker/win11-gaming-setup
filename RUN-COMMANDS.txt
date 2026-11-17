@@ -85,6 +85,16 @@ this step PowerShell may refuse to run the script.
       Get-Service DiagTrack, WSearch, Spooler, SysMain, WlanSvc, WinDefend -ErrorAction SilentlyContinue |
         Select-Object Name, Status, StartType | Format-Table
 
+  Check the LAN-discovery services are kept when a LAN is present:
+
+      Get-NetConnectionProfile | Select Name,NetworkCategory
+      Get-Service SSDPSRV,upnphost,FDResPub,fdPHost,LanmanWorkstation,LanmanServer | Select Name,Status,StartType
+
+  The script enables Network Discovery + File and Printer Sharing firewall
+  rules. If other PCs still do not appear in Explorer > Network, make sure the
+  network profile is Private, then try  \\<ip-address>  directly to confirm
+  file sharing itself works.
+
   Check Defender is still protecting you (real-time should be True):
 
       Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled, AntivirusEnabled
@@ -112,6 +122,8 @@ this step PowerShell may refuse to run the script.
   -KeepPrintSpooler         keep printing enabled
   -KeepWindowsSearch        keep the search indexer (WSearch)
   -KeepDefenderDailyScan    keep a daily Defender scan at 03:00
+  -NoLAN                    force LAN discovery services off (offline gaming PC)
+  -KeepSMB1                 keep SMB1 (very old NAS / Windows XP devices)
   -SkipDebloat              do not remove Store apps
   -SkipCleanup              skip disk cleanup + Windows Update cache reset
   -SkipRestorePoint         do not create a System Restore point

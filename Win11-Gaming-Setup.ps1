@@ -18,7 +18,9 @@
       4b. Windows Defender resource tuning (low CPU priority, 20% scan cap)
       4c. Store app debloat (keeps Photos, Snipping Tool, Solitaire, Media Player)
       5.  Disk cleanup (temp, WER, shader caches, WinRE leftover, WU cache, icons)
-      6.  Service slimming for a gaming-only PC
+      6.  Service slimming for a gaming-only PC, with LAN-aware detection:
+          SSDP / UPnP / Function Discovery stay ON when the machine is on a LAN,
+          so other Windows/Linux PCs remain visible in Explorer > Network
       7.  Internet / network tuning (RSS, Nagle off, QoS, NIC power saving)
       8.  Icon + thumbnail cache rebuild
       9.  Automatic backup + Revert.ps1 generator
@@ -56,6 +58,14 @@
 .PARAMETER KeepDefenderDailyScan
     Keep a daily Defender scan at 03:00 instead of disabling the schedule.
 
+.PARAMETER NoLAN
+    Force the LAN-discovery services off even if a LAN is detected.
+    Default: they are kept running whenever the PC is on a LAN.
+
+.PARAMETER KeepSMB1
+    Do not disable SMB1. Only needed for very old NAS boxes or Windows XP
+    devices that cannot speak SMB2/3. SMB1 is otherwise disabled for security.
+
 .PARAMETER NoPause
     Do not wait for a key press at the end (used for unattended runs).
 
@@ -84,13 +94,15 @@ param(
     [switch]$DeepComponentCleanup,
     [switch]$SkipDebloat,
     [switch]$KeepDefenderDailyScan,
+    [switch]$NoLAN,
+    [switch]$KeepSMB1,
     [switch]$NoPause,
     [switch]$ElevatedChild
 )
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
-$ScriptVersion = '1.1.0'
+$ScriptVersion = '1.1.1'
 
 # ---------------------------------------------------------------- self-elevate
 if (-not $ElevatedChild) {
@@ -98,7 +110,7 @@ if (-not $ElevatedChild) {
     $isAdmin = (New-Object Security.Principal.WindowsPrincipal($wid)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $isAdmin) {
         $fwd = @()
-        foreach ($n in 'SkipCleanup','SkipRestorePoint','KeepPrintSpooler','KeepWindowsSearch','DisableSysMain','DisableMouseAcceleration','EmptyRecycleBin','DeepComponentCleanup','SkipDebloat','KeepDefenderDailyScan','NoPause') {
+        foreach ($n in 'SkipCleanup','SkipRestorePoint','KeepPrintSpooler','KeepWindowsSearch','DisableSysMain','DisableMouseAcceleration','EmptyRecycleBin','DeepComponentCleanup','SkipDebloat','KeepDefenderDailyScan','NoLAN','KeepSMB1','NoPause') {
             if ((Get-Variable -Name $n -ValueOnly)) { $fwd += "-$n" }
         }
         Write-Host ''
@@ -669,6 +681,71 @@ function Set-SvcStart {
     }
 }
 
+# ============================================================ LAN DISCOVERY
+# Explorer > Network and \\hostname / \\IP browsing depend on these services.
+# Disabling SSDPSRV / upnphost used to make every other LAN PC disappear while
+# direct file transfer still worked. Decide from the machine's own state.
+Log '-- LAN discovery (auto-detected) --'
+$lanPresent = $false
+$lanReasons = @()
+
+if ($NoLAN) {
+    Log '  LAN detection overridden (-NoLAN) - discovery services will be slimmed' 'DarkYellow'
+} else {
+    # 1. An active Private or Domain network profile means a trusted LAN
+    try {
+        foreach ($pf in @(Get-NetConnectionProfile -ErrorAction Stop)) {
+            if ([string]$pf.NetworkCategory -in @('Private','Domain','DomainAuthenticated')) {
+                $lanPresent = $true
+                $lanReasons += ('{0}={1}' -f $pf.InterfaceAlias, $pf.NetworkCategory)
+            }
+        }
+    } catch { }
+
+    # 2. RFC1918 address also counts, even if the profile query is unavailable
+    try {
+        $rfc1918 = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
+            Where-Object { $_.IPAddress -match '^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)' })
+        if ($rfc1918.Count -gt 0) {
+            $lanPresent = $true
+            $lanReasons += 'private IPv4'
+        }
+    } catch { }
+
+    # 3. Existing SMB shares or mapped drives mean this PC is part of a LAN
+    try {
+        $shares = @(Get-SmbShare -ErrorAction Stop |
+            Where-Object { $_.Name -notin @('IPC$','ADMIN$','C$','D$') })
+        if ($shares.Count -gt 0) { $lanPresent = $true; $lanReasons += 'local shares' }
+    } catch { }
+    try {
+        $mapped = @(Get-PSDrive -PSProvider FileSystem -ErrorAction Stop |
+            Where-Object { $_.DisplayRoot -like '\\*' })
+        if ($mapped.Count -gt 0) { $lanPresent = $true; $lanReasons += 'mapped drives' }
+    } catch { }
+}
+
+if ($lanPresent) {
+    Log ('  LAN detected ({0}) - keeping discovery services ON' -f ($lanReasons -join ', ')) 'Green'
+    # FDResPub publishes this PC; fdPHost + SSDP + UPnP discover other PCs.
+    foreach ($svc in @('FDResPub','fdPHost','SSDPSRV','upnphost')) {
+        $w = Get-CimInstance Win32_Service -Filter ("Name='{0}'" -f $svc) -ErrorAction SilentlyContinue
+        if (-not $w) { continue }
+        if (-not $svcOriginal.ContainsKey($svc)) { $svcOriginal[$svc] = [int](Get-SvcStartValue $svc) }
+        $wantStart = if ($svc -in @('FDResPub','fdPHost')) { 2 } else { 3 }
+        if ((Get-SvcStartValue $svc) -ne $wantStart) {
+            & sc.exe config $svc start= $(if ($wantStart -eq 2) { 'auto' } else { 'demand' }) 2>&1 | Out-Null
+        }
+        if ($w.State -ne 'Running') { Start-Service -Name $svc -ErrorAction SilentlyContinue }
+        $now = Get-Service -Name $svc -ErrorAction SilentlyContinue
+        Log ('  KEEP  {0,-12} {1,-9} LAN discovery' -f $svc, $now.Status) 'Green'
+    }
+} else {
+    Log '  No LAN detected - SSDP / UPnP discovery will be slimmed' 'DarkGray'
+    Set-SvcStart 'SSDPSRV' 'disabled' 'no LAN - SSDP discovery'
+    Set-SvcStart 'upnphost' 'disabled' 'no LAN - UPnP host'
+}
+
 Log '-- Telemetry / diagnostics / error reporting --'
 Set-SvcStart 'DiagTrack' 'disabled' 'telemetry upload'
 Set-SvcStart 'dmwappushservice' 'disabled' 'WAP push'
@@ -711,11 +788,10 @@ Set-SvcStart 'EntAppSvc' 'disabled' 'enterprise apps'
 Set-SvcStart 'embeddedmode' 'disabled' 'embedded mode'
 
 Log '-- Remote access / legacy (security) --'
+# SSDPSRV and upnphost are handled by the LAN-detection block above.
 Set-SvcStart 'RemoteRegistry' 'disabled' 'remote registry'
 Set-SvcStart 'RemoteAccess' 'disabled' 'RRAS'
 Set-SvcStart 'seclogon' 'disabled' 'secondary logon'
-Set-SvcStart 'upnphost' 'disabled' 'UPnP host'
-Set-SvcStart 'SSDPSRV' 'disabled' 'SSDP discovery'
 Set-SvcStart 'Fax' 'disabled' 'fax'
 Set-SvcStart 'Bonjour Service' 'disabled' 'bonjour/mDNS'
 Set-SvcStart 'NvTelemetryContainer' 'disabled' 'nvidia telemetry'
@@ -857,11 +933,30 @@ try {
 Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization' 'DODownloadMode' 0
 Log '  Delivery Optimization peering OFF (LAN free for file transfer)'
 
-# SMB1 off (security), SMB2/3 on (Linux and Windows shares keep working)
-try {
-    Set-SmbServerConfiguration -EnableSMB1Protocol $false -Force -ErrorAction Stop
-    Log '  SMB1 disabled, SMB2/3 enabled (LAN shares OK)' 'Green'
-} catch { Log '  SMB configuration skipped' 'DarkYellow' }
+# SMB1: off for security, SMB2/3 stay on so Linux and Windows shares keep working.
+# Keep it automatically if an SMB 1.5 connection is already in use (old NAS/XP).
+if ($KeepSMB1) {
+    Log '  KEEP SMB1 (requested with -KeepSMB1)' 'DarkGray'
+} else {
+    $smb1InUse = $false
+    try {
+        $smb1InUse = [bool](Get-SmbConnection -ErrorAction Stop |
+            Where-Object { $_.Dialect -eq '1.5' } | Select-Object -First 1)
+    } catch { }
+    if ($smb1InUse) {
+        Log '  KEEP SMB1 - an active SMB 1.5 connection was detected' 'DarkYellow'
+    } else {
+        # Back up the SMB1 flag so Revert.ps1 can put it back
+        $smbReg = 'HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+        if (Test-Path ('HKLM:\' + $smbReg)) {
+            & reg.exe export $smbReg (Join-Path $BakDir 'smb1.reg') /y 2>&1 | Out-Null
+        }
+        try {
+            Set-SmbServerConfiguration -EnableSMB1Protocol $false -Force -ErrorAction Stop
+            Log '  SMB1 disabled, SMB2/3 enabled (LAN shares OK)' 'Green'
+        } catch { Log '  SMB configuration skipped' 'DarkYellow' }
+    }
+}
 
 # Keep network discovery and file sharing allowed for LAN transfers
 try {

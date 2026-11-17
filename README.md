@@ -6,7 +6,7 @@
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?style=flat-square&logo=powershell)
 ![Admin](https://img.shields.io/badge/requires-Administrator-red?style=flat-square)
 ![Revert](https://img.shields.io/badge/revert-included-success?style=flat-square)
-![Version](https://img.shields.io/badge/version-1.1.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.1.1-blue?style=flat-square)
 
 ---
 
@@ -62,6 +62,8 @@ The script re-launches itself elevated, prints a coloured live log, and ends wit
 |---|---|
 | `-KeepPrintSpooler` | Keep printing enabled (Print Spooler stays `Automatic`) |
 | `-KeepWindowsSearch` | Keep Windows Search indexing (recommended if you search files a lot) |
+| `-NoLAN` | Force LAN-discovery services off even if a LAN is detected (offline gaming PC) |
+| `-KeepSMB1` | Keep SMB1 (only for very old NAS / Windows XP devices) |
 | `-KeepDefenderDailyScan` | Keep a daily Defender scan at 03:00 |
 | `-SkipDebloat` | Do not remove any Store app |
 | `-SkipCleanup` | Skip disk cleanup and the Windows Update cache reset |
@@ -181,10 +183,36 @@ So a laptop with WiFi + Bluetooth + webcam keeps all of those working — nothin
 | Nagle (`TcpAckFrequency`, `TCPNoDelay`) | `1` / `1` | Lower latency in games |
 | QoS reserved bandwidth | `0` | Nothing held back |
 | NIC power saving / EEE / RSC | off | No random packet drops |
-| SMB1 | `disabled` | Security (SMB2/3 stays on for Linux & Windows shares) |
+| SMB1 | `disabled` unless an SMB 1.5 connection is active | Security (SMB2/3 stays on for Linux & Windows shares) |
 | Delivery Optimization | HTTP only | LAN stays free for file transfers |
 | Firewall | Discovery + File Sharing allowed | Linux ↔ Windows transfers work |
 | DNS cache | flushed | Fresh lookups |
+
+---
+
+## 🖧 LAN discovery (auto-detected)
+
+Explorer → **Network** and `\\hostname` / `\\IP` browsing need
+`SSDPSRV`, `upnphost`, `FDResPub` and `fdPHost`. Older versions of this
+script disabled SSDP/UPnP, which made other LAN PCs disappear from the
+Network view while direct transfers still worked.
+
+The script now decides from the machine itself:
+
+| Detection | Result |
+|---|---|
+| Active `Private` / `DomainAuthenticated` network profile | LAN → discovery services kept ON and started |
+| Private IPv4 address (`10.*`, `172.16-31.*`, `192.168.*`) | LAN → same |
+| Local SMB shares or mapped network drives | LAN → same |
+| None of the above | SSDP/UPnP slimmed as telemetry-safe overhead |
+| `-NoLAN` | Force the slim behaviour on any machine |
+
+`LanmanWorkstation`, `LanmanServer`, `lmhosts`, `iphlpsvc`, `mpssvc` and
+Function Discovery stay in the protected list in every case, and the
+Network Discovery + File and Printer Sharing firewall groups are enabled.
+
+SMB1 is disabled by default for security, but is **kept automatically** when
+an active SMB 1.5 connection is detected, or with `-KeepSMB1`.
 
 ---
 

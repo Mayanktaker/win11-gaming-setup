@@ -1,6 +1,6 @@
 ================================================================================
  WINDOWS GAMING SETUP - READY-TO-RUN COMMANDS
- Target: Windows 10 (incl. LTSC 2019 / 2021 / IoT) and Windows 11
+ Target: Windows 10 (Home, Pro, LTSC 22H2) and Windows 11 (21H2 - 26H2+)
 ================================================================================
 
 FASTEST WAY - NO TYPING AT ALL:

@@ -1,12 +1,12 @@
 # 🎮 Windows Gaming Setup
 
-> Turn a fresh Windows 10 / 11 (LTSC included) install into a lean, fast, **gaming-only** PC — with one administrator script and a one-click undo.
+> Turn a fresh Windows 10 / 11 (Home, Pro, Enterprise, LTSC through 26H2+) install into a lean, fast, **gaming-only** PC — with one administrator script and a one-click undo.
 
 ![Platform](https://img.shields.io/badge/platform-Windows%2011%20%7C%2010%20%7C%20LTSC-0078D6?style=flat-square&logo=windows)
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?style=flat-square&logo=powershell)
 ![Admin](https://img.shields.io/badge/requires-Administrator-red?style=flat-square)
 ![Revert](https://img.shields.io/badge/revert-included-success?style=flat-square)
-![Version](https://img.shields.io/badge/version-1.4.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.5.0-blue?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
 ---

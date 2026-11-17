@@ -7,10 +7,11 @@
 .DESCRIPTION
     A single, safe, reversible setup script for a gaming-only Windows machine.
 
-    Tested on Windows 11 (build 26300) and written to run on Windows 10 as well,
-    including LTSC / IoT LTSC images. Anything that does not exist on the running
-    build (Windows 11 context menu, Widgets, Copilot, Store apps on LTSC) is
-    skipped with a log line instead of failing.
+    Tested and optimized for Windows 10 (Home / Pro / Enterprise 22H2, plus
+    LTSC 2019/2021/2024 / IoT LTSC) and Windows 11 (21H2 through 26H2+ / build 27000+).
+    Anything that does not exist on the running build (e.g. Windows 11 context menu,
+    Widgets, Copilot, Recall, Click to Do, Store apps on LTSC) is safely skipped
+    with a log line instead of failing.
 
       1.  UI / Explorer responsiveness (classic context menu, no animations)
       2.  Power plan + PCIe ASPM off + sleep never (gaming profile)
@@ -106,7 +107,7 @@
     Revert : .\Revert.ps1 (next to this script) or C:\ProgramData\Win11GamingSetup\Revert.ps1
     Logs   : C:\ProgramData\Win11GamingSetup\logs
     Backup : C:\ProgramData\Win11GamingSetup\backup
-    Version: 1.4.0
+    Version: 1.5.0
 #>
 
 [CmdletBinding()]
@@ -136,7 +137,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
-$ScriptVersion = '1.4.0'
+$ScriptVersion = '1.5.0'
 
 # ---------------------------------------------------------------- self-elevate
 if (-not $ElevatedChild) {
@@ -226,9 +227,12 @@ Log ('RAM: {0:N1} GB' -f ($cs.TotalPhysicalMemory / 1GB)) 'DarkGray'
 # build is skipped instead of failing.
 $winBuild = [int]$os.BuildNumber
 $IsWin11  = $winBuild -ge 22000
+$IsWin10  = ($winBuild -ge 10240) -and ($winBuild -lt 22000)
 $IsLTSC   = ($os.Caption -match 'LTSC|EnterpriseS|IoT') -or ($os.OperatingSystemSKU -in 125,126,129)
-Log ('Family: {0}' -f $(if ($IsWin11) { 'Windows 11' } else { 'Windows 10' })) 'DarkGray'
-if ($IsLTSC) { Log 'Edition: LTSC / IoT - consumer apps and Store bloat are mostly missing already' 'DarkGray' }
+$IsWin11_24H2Plus = $winBuild -ge 26100
+Log ('Family: {0} ({1})' -f $(if ($IsWin11) { if ($IsWin11_24H2Plus) { 'Windows 11 (24H2 - 26H2+)' } else { 'Windows 11' } } else { 'Windows 10 (22H2 / legacy)' }), $(if ($IsLTSC) { 'LTSC / Enterprise' } else { 'Consumer / Standard' })) 'DarkGray'
+if ($IsLTSC) { Log 'Edition: LTSC / IoT - consumer bloat is mostly missing, focusing on services and telemetry' 'DarkGray' }
+else { Log 'Edition: Consumer / Standard - applying comprehensive debloat and background app pruning' 'DarkGray' }
 
 $freeBefore = [math]::Round((Get-PSDrive -Name ($env:SystemDrive -replace ':','')).Free / 1GB, 2)
 
@@ -264,9 +268,18 @@ $regBackups = @(
     @{ H = 'HKLM'; P = 'SYSTEM\CurrentControlSet\Control\Power\PowerThrottling'; F = 'powerthrottling.reg' },
     @{ H = 'HKLM'; P = 'SYSTEM\CurrentControlSet\Services\Tcpip\Parameters'; F = 'tcpip.reg' },
     @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Windows\WindowsAI'; F = 'policy-windowsai.reg' },
+    @{ H = 'HKCU'; P = 'Software\Policies\Microsoft\Windows\WindowsAI'; F = 'user-policy-windowsai.reg' },
     @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot'; F = 'policy-copilot.reg' },
+    @{ H = 'HKCU'; P = 'Software\Policies\Microsoft\Windows\WindowsCopilot'; F = 'user-policy-copilot.reg' },
     @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Dsh'; F = 'policy-dsh.reg' },
-    @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization'; F = 'policy-do.reg' }
+    @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization'; F = 'policy-do.reg' },
+    @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Edge'; F = 'policy-edge.reg' },
+    @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Windows\DataCollection'; F = 'policy-datacollection.reg' },
+    @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo'; F = 'policy-advertisinginfo.reg' },
+    @{ H = 'HKCU'; P = 'Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo'; F = 'user-advertisinginfo.reg' },
+    @{ H = 'HKLM'; P = 'SYSTEM\CurrentControlSet\Services\Ndu'; F = 'ndu.reg' },
+    @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting'; F = 'wer.reg' },
+    @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Windows\System'; F = 'policy-system.reg' }
 )
 $okBackups = 0
 foreach ($b in $regBackups) {
@@ -304,6 +317,9 @@ Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'Tas
 Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ShowCopilotButton' 0
 Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'SearchboxTaskbarMode' 1
 Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'Start_IrisRecommendations' 0
+Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ShowRecommendations' 0
+Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'RecommendedContentStatus' 0
+Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ExploreSuggestions' 0
 Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'ShowSyncProviderNotifications' 0
 Log '  Animations / transparency / menu delay tuned'
 
@@ -328,8 +344,16 @@ if ($script:OrigPowerScheme) {
     Log ('  Original power scheme backed up: {0}' -f $script:OrigPowerScheme) 'DarkGray'
 }
 
-& powercfg.exe /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c 2>&1 | Out-Null
+# Ultimate Performance plan (Windows 10/11) with fallback to High Performance
+$ultPlan = 'e9a42b02-d5df-448d-aa00-03f14749eb61'
+$hiPlan  = '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'
+& powercfg.exe -duplicatescheme $ultPlan 2>&1 | Out-Null
+& powercfg.exe /setactive $ultPlan 2>&1 | Out-Null
 $planNow = (powercfg /getactivescheme) -join ' '
+if ($planNow -notmatch $ultPlan) {
+    & powercfg.exe /setactive $hiPlan 2>&1 | Out-Null
+    $planNow = (powercfg /getactivescheme) -join ' '
+}
 Log ('  Active plan -> {0}' -f $planNow)
 
 # Processor minimum state 100% (no downclocking stutter), PCIe ASPM off, no sleep
@@ -351,7 +375,7 @@ Section 'Gaming registry tweaks'
 
 $mm = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile'
 Set-Reg $mm 'NetworkThrottlingIndex' 4294967295
-Set-Reg $mm 'SystemResponsiveness' 10
+Set-Reg $mm 'SystemResponsiveness' 0
 $games = "$mm\Tasks\Games"
 Set-Reg $games 'GPU Priority' 8
 Set-Reg $games 'Priority' 6
@@ -360,16 +384,28 @@ Set-Reg $games 'SFIO Priority' 'High' 'String'
 Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl' 'Win32PrioritySeparation' 38
 Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling' 'PowerThrottlingOff' 1
 
-# GameDVR / Game Bar recording off, Game Mode on
+# GameDVR / Game Bar recording off, Game Mode on, FSO optimized
 Set-Reg 'HKCU:\System\GameConfigStore' 'GameDVR_Enabled' 0
 Set-Reg 'HKCU:\System\GameConfigStore' 'GameDVR_FSEBehaviorMode' 2
+Set-Reg 'HKCU:\System\GameConfigStore' 'GameDVR_DXGIHonorFSEWindowsCompatible' 1
+Set-Reg 'HKCU:\System\GameConfigStore' 'GameDVR_HonorUserFSEBehaviorMode' 1
+Set-Reg 'HKCU:\System\GameConfigStore' 'GameDVR_EFSEFeatureFlags' 0
 Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR' 'AppCaptureEnabled' 0
 Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR' 'HistoricalCaptureEnabled' 0
 Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR' 'AllowGameDVR' 0
 Set-Reg 'HKCU:\Software\Microsoft\GameBar' 'AutoGameModeEnabled' 1
 Set-Reg 'HKCU:\Software\Microsoft\GameBar' 'AllowAutoGameMode' 1
 Set-Reg 'HKCU:\Software\Microsoft\GameBar' 'ShowStartupPanel' 0
-Log '  MMCSS Games profile, priority 38, throttling off, GameDVR off, Game Mode on'
+
+# GameBarPresenceWriter disabled (stops game process hooking)
+Set-Reg 'HKLM:\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Windows.Gaming.GameBar.PresenceServer.Internal.PresenceWriter' 'ActivationType' 0
+
+# Network Data Usage (NDU) telemetry driver leak fix (prevents non-paged pool memory leak)
+Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Services\Ndu' 'Start' 4
+
+# Windows Error Reporting off
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting' 'Disabled' 1
+Log '  MMCSS Games profile (responsiveness 0), priority 38, GameDVR off, NDU fixed, WER off'
 
 # Hardware-Accelerated GPU Scheduling (opt-in, modern GPUs only)
 if ($EnableHAGS) {
@@ -393,22 +429,25 @@ if ($KeepCopilot) {
     Log '  Copilot: policy off + processes stopped'
 }
 
-# --- Windows Recall / AI data analysis (Copilot+ PCs, 24H2+) ---
+# --- Windows Recall / Click to Do / AI analysis (24H2 - 26H2, Copilot+ PCs) ---
 Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'DisableAIDataAnalysis' 1
 Set-Reg 'HKCU:\Software\Policies\Microsoft\Windows\WindowsAI' 'DisableAIDataAnalysis' 1
-Log '  Windows Recall / AI data analysis disabled'
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'AllowRecallEnablement' 0
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'DisableClickToDo' 1
+Set-Reg 'HKCU:\Software\Policies\Microsoft\Windows\WindowsAI' 'DisableClickToDo' 1
+Log '  Windows Recall, Click to Do, and AI data analysis disabled (24H2-26H2)'
 
-# --- Widgets / Phone Link background access ---
+# --- Widgets / Phone Link / Cross Device background access ---
 foreach ($p in 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh','HKCU:\Software\Policies\Microsoft\Dsh') {
     Set-Reg $p 'AllowNewsAndInterests' 0
 }
-foreach ($pkg in 'Microsoft.WidgetsPlatformRuntime_8wekyb3d8bbwe','MicrosoftWindows.Client.WebExperience_cw5n1h2txyewy','Microsoft.YourPhone_8wekyb3d8bbwe') {
+foreach ($pkg in 'Microsoft.WidgetsPlatformRuntime_8wekyb3d8bbwe','MicrosoftWindows.Client.WebExperience_cw5n1h2txyewy','Microsoft.YourPhone_8wekyb3d8bbwe','MicrosoftWindows.CrossDevice_cw5n1h2txyewy') {
     $k = "HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications\$pkg"
     Set-Reg $k 'Disabled' 1
     Set-Reg $k 'DisabledByUser' 1
 }
-Get-Process WidgetService, PhoneExperienceHost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Log '  Widgets + Phone Link: background access off, processes stopped'
+Get-Process WidgetService, PhoneExperienceHost, CrossDeviceExperienceHost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Log '  Widgets, Phone Link, and Cross Device host stopped'
 
 # --- Ads / suggestions / consumer features ---
 $cdm = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
@@ -423,7 +462,17 @@ Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableWindows
 Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableSoftLanding' 1
 Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableCloudOptimizedContent' 1
 Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\SQMClient\Windows' 'CEIPEnable' 0
-Log '  Ads / suggestions / CEIP off'
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo' 'DisabledByGroupPolicy' 1
+Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo' 'Enabled' 0
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' 'AllowTelemetry' 0
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' 'DoNotShowFeedbackNotifications' 1
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' 'AllowCrossDeviceClipboard' 0
+
+# --- Edge background boost / sidebar / telemetry ---
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' 'StartupBoostEnabled' 0
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' 'BackgroundModeEnabled' 0
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' 'HubsSidebarEnabled' 0
+Log '  Ads / suggestions / CEIP / Advertising ID / Edge boost off'
 
 # --- Start menu search: local results only, no Bing / web engine ---
 # The search UI is a WebView2 app on Windows 11. Web results make it load an
@@ -554,13 +603,20 @@ $tasks = @(
     '\Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser',
     '\Microsoft\Windows\Application Experience\ProgramDataUpdater',
     '\Microsoft\Windows\Application Experience\AitAgent',
+    '\Microsoft\Windows\Application Experience\StartupAppTask',
+    '\Microsoft\Windows\Application Experience\MareBackup',
+    '\Microsoft\Windows\Application Experience\PcaWallpaperAppDetect',
     '\Microsoft\Windows\Customer Experience Improvement Program\Consolidator',
     '\Microsoft\Windows\Customer Experience Improvement Program\UsbCeip',
     '\Microsoft\Windows\Customer Experience Improvement Program\KernelCeipTask',
+    '\Microsoft\Windows\Customer Experience Improvement Program\BthSQM',
+    '\Microsoft\Windows\Customer Experience Improvement Program\TelTask',
     '\Microsoft\Windows\Feedback\Siuf\DmClient',
     '\Microsoft\Windows\Feedback\Siuf\DmClientOnScenarioDownload',
     '\Microsoft\Windows\Windows Error Reporting\QueueReporting',
     '\Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticDataCollector',
+    '\Microsoft\Windows\DiskFootprint\Diagnostics',
+    '\Microsoft\Windows\PI\Sqm-Tasks',
     '\Microsoft\Windows\Maintenance\WinSAT',
     '\Microsoft\Windows\Autochk\Proxy',
     '\Microsoft\Windows\Maps\MapsToastTask',
@@ -569,7 +625,11 @@ $tasks = @(
     '\Microsoft\Windows\Windows Media Sharing\UpdateLibrary',
     '\Microsoft\Windows\Device Information\Device',
     '\Microsoft\Windows\Power Efficiency Diagnostics\AnalyzeSystem',
-    '\Microsoft\Windows\CloudExperienceHost\CreateObjectTask'
+    '\Microsoft\Windows\CloudExperienceHost\CreateObjectTask',
+    '\Microsoft\Windows\Shell\FamilySafetyMonitor',
+    '\Microsoft\Windows\Shell\FamilySafetyRefresh',
+    '\Microsoft\Windows\Windows AI\RecallSnapshot',
+    '\Microsoft\Windows\Windows AI\SnapshotCollection'
 )
 $taskBakFile = Join-Path $BakDir 'tasks-backup.json'
 $existingTaskBak = @()
@@ -681,11 +741,18 @@ if ($SkipDebloat) {
     # ScreenSketch (Snipping Tool), Microsoft Solitaire Collection, Paint, Notepad,
     # Terminal, Calculator, Store, Xbox / Gaming App, WebView, VCLibs, AppRuntime, codecs
     $RemoveApps = @(
+        # Microsoft Consumer & Cloud Bloat (Windows 10 22H2 / Windows 11 21H2-26H2)
         'Clipchamp.Clipchamp',
         'Microsoft.BingNews',
         'Microsoft.BingWeather',
         'Microsoft.BingSearch',
+        'Microsoft.BingFinance',
+        'Microsoft.BingSports',
+        'Microsoft.BingFoodAndDrink',
+        'Microsoft.BingHealthAndFitness',
+        'Microsoft.BingTravel',
         'Microsoft.GetHelp',
+        'Microsoft.Getstarted',
         'Microsoft.MicrosoftOfficeHub',
         'Microsoft.OutlookForWindows',
         'Microsoft.PowerAutomateDesktop',
@@ -705,14 +772,49 @@ if ($SkipDebloat) {
         'Microsoft.WindowsMaps',
         'Microsoft.ZuneVideo',
         'Microsoft.People',
-        'Microsoft.MicrosoftStickyNotes'
+        'Microsoft.MicrosoftStickyNotes',
+        'Microsoft.Microsoft3DViewer',
+        'Microsoft.3DBuilder',
+        'Microsoft.Print3D',
+        'Microsoft.MixedReality.Portal',
+        'Microsoft.SkypeApp',
+        'Microsoft.Whiteboard',
+        'Microsoft.OneConnect',
+        'Microsoft.Messaging',
+        'Microsoft.Wallet',
+        'Microsoft.WindowsSoundRecorder',
+        'MicrosoftWindows.CrossDevice',
+        'Microsoft.Windows.Ai.Copilot.Provider',
+        'Microsoft.WindowsMeetNow',
+
+        # OEM & Sponsored Bloat (Windows 10/11 Consumer Home & Pro)
+        'king.com.CandyCrushSaga',
+        'king.com.CandyCrushSodaSaga',
+        'king.com.BubbleWitch3Saga',
+        'Facebook.Facebook',
+        'Facebook.InstagramBeta',
+        'BytedancePte.Ltd.TikTok',
+        'SpotifyAB.SpotifyMusic',
+        '4DF9E0F8.Netflix',
+        'PandoraMediaInc.29680B314EFC2',
+        'A926CF05.DisneyPlus',
+        '5A894077.McAfeeSecurity',
+        '5319275A.WhatsAppDesktop',
+        'Amazon.com.Amazon',
+        'AdobeSystemsIncorporated.AdobePhotoshopExpress'
     )
     if (-not $hasCam) { $RemoveApps += 'Microsoft.WindowsCamera' }
 
     foreach ($a in $RemoveApps) {
-        $found = @(Get-AppxPackage -Name $a -ErrorAction SilentlyContinue)
+        $found = @(Get-AppxPackage -Name $a -AllUsers -ErrorAction SilentlyContinue)
+        if ($found.Count -eq 0) { $found = @(Get-AppxPackage -Name $a -ErrorAction SilentlyContinue) }
         foreach ($pkg in $found) {
             $ok = $false
+            if ($DryRun) {
+                Log ('  [DRY] remove app: {0}' -f $a) 'DarkGray'
+                $appsRemoved++
+                continue
+            }
             try { Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction Stop; $ok = $true }
             catch {
                 try { Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop; $ok = $true } catch { }
@@ -720,11 +822,13 @@ if ($SkipDebloat) {
             if ($ok) { Log ('  - removed {0}' -f $a) 'Green'; $appsRemoved++ }
             else { Log ('  - could not remove {0}' -f $a) 'DarkYellow' }
         }
-        try {
-            Get-AppxProvisionedPackage -Online -ErrorAction Stop |
-                Where-Object { $_.DisplayName -eq $a } |
-                ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue | Out-Null }
-        } catch { }
+        if (-not $DryRun) {
+            try {
+                Get-AppxProvisionedPackage -Online -ErrorAction Stop |
+                    Where-Object { $_.DisplayName -eq $a -or $_.DisplayName -like $a } |
+                    ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue | Out-Null }
+            } catch { }
+        }
     }
     if ($appsRemoved -eq 0) {
         Log '  No removable Store apps found (normal on LTSC / IoT images)' 'DarkGray'
@@ -761,6 +865,7 @@ if ($SkipCleanup) {
     Clear-Dir "$env:LOCALAPPDATA\NVIDIA\DXCache" 'NVIDIA DX cache'
     Clear-Dir "$env:LOCALAPPDATA\NVIDIA\GLCache" 'NVIDIA GL cache'
     Clear-Dir "$env:LOCALAPPDATA\AMD\DxCache" 'AMD shader cache'
+    Clear-Dir "$env:LOCALAPPDATA\Intel\ShaderCache" 'Intel shader cache'
     Clear-Dir "$env:LOCALAPPDATA\Microsoft\Windows\INetCache" 'INetCache'
     Clear-Dir 'C:\ProgramData\Microsoft\Windows\WER\Temp' 'WER temp'
 
@@ -1084,6 +1189,13 @@ Set-SvcStart 'diagsvc' 'disabled' 'diagnostic execution'
 Set-SvcStart 'WdiServiceHost' 'disabled' 'diagnostics host'
 Set-SvcStart 'WdiSystemHost' 'disabled' 'diagnostics system host'
 Set-SvcStart 'WalletService' 'disabled' 'wallet'
+Set-SvcStart 'AssignedAccessManagerSvc' 'disabled' 'kiosk assigned access'
+Set-SvcStart 'tzautoupdate' 'disabled' 'auto timezone'
+Set-SvcStart 'autotimesvc' 'disabled' 'cellular time sync'
+Set-SvcStart 'SharedRealitySvc' 'disabled' 'spatial perception'
+Set-SvcStart 'MixedRealityOpenXRSvc' 'disabled' 'mixed reality OpenXR'
+Set-SvcStart 'CscService' 'disabled' 'offline files'
+Set-SvcStart 'TroubleshootingSvc' 'disabled' 'recommended troubleshooting'
 
 Log ('-- {0} service settings applied --' -f $script:Changed) 'Cyan'
 

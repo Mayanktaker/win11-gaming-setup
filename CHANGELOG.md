@@ -2,6 +2,24 @@
 
 # Changelog
 
+## [1.5.0]
+
+### What's new
+- Added full support for the latest Windows 10 consumer editions (Home and Pro 22H2) and Windows 11 updates through version 26H2.
+- Automatically unlocks and activates the Ultimate Performance power profile on supported desktop systems.
+- Thorough cleanup of preinstalled sponsored consumer bloatware (including Candy Crush, TikTok, Spotify, Netflix, Disney+, and social apps).
+- Automatically turns off background AI monitoring, Click to Do screenshot analysis, and Windows Recall background services on newer Windows 11 releases.
+- Eliminates Edge background browser tasks, automatic shopping assistants, and startup boosts that run without the browser open.
+- Shuts down background device linking and cross-device sync tasks to keep CPU and memory clear for games.
+- Fullscreen game optimization settings now prioritize maximum frames and lower audio/input response delay.
+- Added Intel graphics shader cache to the automated cleanup routine.
+
+### Bug fixes
+- Resolved a known network data telemetry memory leak that caused gradual RAM consumption during extended multiplayer gaming sessions.
+- Suppressed background error reporting and diagnostic notifications during games.
+
+---
+
 ## [1.4.0]
 
 ### What's new

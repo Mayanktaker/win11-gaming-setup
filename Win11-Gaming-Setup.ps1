@@ -1,3 +1,4 @@
+# © Mayanktaker Computers & Web Development | https://mayanktaker.com
 <#
 .SYNOPSIS
     Windows 10 / 11 Gaming-Only PC Setup - one script for tweaks, cleanup,
@@ -72,6 +73,19 @@
     By default it is fully disabled: icon hidden, host renamed and a logon
     cleanup task installed. Start menu and app launching still work.
 
+.PARAMETER KeepCopilot
+    Do not disable Windows Copilot or the standalone Copilot app.
+
+.PARAMETER KeepNotifications
+    Keep Windows push notification services (WpnService, WpnUserService).
+    Required for apps like Discord, Telegram and Slack that use toast notifications.
+
+.PARAMETER EnableHAGS
+    Enable Hardware-Accelerated GPU Scheduling (improves latency on modern GPUs).
+
+.PARAMETER DryRun
+    Log what would change without making any changes. Useful for preview.
+
 .PARAMETER DnsKeepLocalFirst
     Keep the current router/AD DNS as the first resolver and append the fastest
     public ones. Default: fastest public DNS first, existing DNS kept as fallback.
@@ -92,7 +106,7 @@
     Revert : .\Revert.ps1 (next to this script) or C:\ProgramData\Win11GamingSetup\Revert.ps1
     Logs   : C:\ProgramData\Win11GamingSetup\logs
     Backup : C:\ProgramData\Win11GamingSetup\backup
-    Version: 1.1.0
+    Version: 1.4.0
 #>
 
 [CmdletBinding()]
@@ -110,6 +124,10 @@ param(
     [switch]$NoLAN,
     [switch]$KeepSMB1,
     [switch]$KeepSearchUI,
+    [switch]$KeepCopilot,
+    [switch]$KeepNotifications,
+    [switch]$EnableHAGS,
+    [switch]$DryRun,
     [switch]$SkipDns,
     [switch]$DnsKeepLocalFirst,
     [switch]$NoPause,
@@ -118,7 +136,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
-$ScriptVersion = '1.3.1'
+$ScriptVersion = '1.4.0'
 
 # ---------------------------------------------------------------- self-elevate
 if (-not $ElevatedChild) {
@@ -126,8 +144,9 @@ if (-not $ElevatedChild) {
     $isAdmin = (New-Object Security.Principal.WindowsPrincipal($wid)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $isAdmin) {
         $fwd = @()
-        foreach ($n in 'SkipCleanup','SkipRestorePoint','KeepPrintSpooler','KeepWindowsSearch','DisableSysMain','DisableMouseAcceleration','EmptyRecycleBin','DeepComponentCleanup','SkipDebloat','KeepDefenderDailyScan','NoLAN','KeepSMB1','KeepSearchUI','SkipDns','DnsKeepLocalFirst','NoPause') {
-            if ((Get-Variable -Name $n -ValueOnly)) { $fwd += "-$n" }
+        foreach ($k in $PSBoundParameters.Keys) {
+            if ($k -eq 'ElevatedChild') { continue }
+            if ($PSBoundParameters[$k] -is [switch] -or $PSBoundParameters[$k] -eq $true) { $fwd += "-$k" }
         }
         Write-Host ''
         Write-Host ' Administrator rights are required. Please press "Yes" on the UAC prompt...' -ForegroundColor Yellow
@@ -155,6 +174,7 @@ if (-not $ScriptDir -or -not (Test-Path $ScriptDir)) { $ScriptDir = $Root }
 $script:LogFile = Join-Path $LogDir ('setup-{0}.log' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
 $svcOriginal = @{}
 $script:Changed = 0
+$script:Stopwatch = [Diagnostics.Stopwatch]::StartNew()
 
 function Log {
     param([string]$Message, [string]$Color = 'Gray')
@@ -170,6 +190,7 @@ function Section {
 
 function Set-Reg {
     param([string]$Path, [string]$Name, $Value, [string]$Type = 'DWord')
+    if ($DryRun) { Log ('  [DRY] Set-Reg {0}\{1} = {2}' -f $Path, $Name, $Value) 'DarkGray'; return $true }
     try {
         if (-not (Test-Path $Path)) { New-Item -Path $Path -Force -ErrorAction Stop | Out-Null }
         New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force -ErrorAction Stop | Out-Null
@@ -192,6 +213,7 @@ function Get-SvcStartValue {
 
 Log ('Gaming Setup v{0}  |  {1}  |  {2}' -f $ScriptVersion, (Get-Date), $env:COMPUTERNAME) 'White'
 Log ('Log: {0}' -f $script:LogFile) 'DarkGray'
+if ($DryRun) { Log '  *** DRY-RUN MODE: no changes will be made ***' 'Yellow' }
 
 $os = Get-CimInstance Win32_OperatingSystem
 $cs = Get-CimInstance Win32_ComputerSystem
@@ -294,6 +316,18 @@ if ($DisableMouseAcceleration) {
 
 # ================================================================ 2. POWER
 Section 'Power plan / gaming power settings'
+
+# Back up the active power scheme GUID so Revert can restore it
+$script:OrigPowerScheme = $null
+try {
+    $pMatch = [regex]::Match(((powercfg /getactivescheme) -join ' '), '[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}')
+    if ($pMatch.Success) { $script:OrigPowerScheme = $pMatch.Value }
+} catch { }
+if ($script:OrigPowerScheme) {
+    Set-Content -Path (Join-Path $BakDir 'power-scheme.txt') -Value $script:OrigPowerScheme -Encoding ASCII
+    Log ('  Original power scheme backed up: {0}' -f $script:OrigPowerScheme) 'DarkGray'
+}
+
 & powercfg.exe /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c 2>&1 | Out-Null
 $planNow = (powercfg /getactivescheme) -join ' '
 Log ('  Active plan -> {0}' -f $planNow)
@@ -337,15 +371,32 @@ Set-Reg 'HKCU:\Software\Microsoft\GameBar' 'AllowAutoGameMode' 1
 Set-Reg 'HKCU:\Software\Microsoft\GameBar' 'ShowStartupPanel' 0
 Log '  MMCSS Games profile, priority 38, throttling off, GameDVR off, Game Mode on'
 
+# Hardware-Accelerated GPU Scheduling (opt-in, modern GPUs only)
+if ($EnableHAGS) {
+    Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' 'HwSchMode' 2
+    Log '  Hardware-Accelerated GPU Scheduling enabled (-EnableHAGS)'
+} else {
+    Log '  HAGS not changed (use -EnableHAGS to enable)' 'DarkGray'
+}
+
 # ================================================================ 4. BACKGROUND JUNK
 Section 'Background apps / ads / telemetry'
 
 # --- Copilot ---
-Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'RemoveMicrosoftCopilotApp' 1
-Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' 1
-Set-Reg 'HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' 1
-Get-Process copilotapp, copilotapphost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Log '  Copilot: policy off + processes stopped'
+if ($KeepCopilot) {
+    Log '  Copilot kept (-KeepCopilot)' 'DarkGray'
+} else {
+    Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'RemoveMicrosoftCopilotApp' 1
+    Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' 1
+    Set-Reg 'HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' 1
+    Get-Process copilotapp, copilotapphost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Log '  Copilot: policy off + processes stopped'
+}
+
+# --- Windows Recall / AI data analysis (Copilot+ PCs, 24H2+) ---
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'DisableAIDataAnalysis' 1
+Set-Reg 'HKCU:\Software\Policies\Microsoft\Windows\WindowsAI' 'DisableAIDataAnalysis' 1
+Log '  Windows Recall / AI data analysis disabled'
 
 # --- Widgets / Phone Link background access ---
 foreach ($p in 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh','HKCU:\Software\Policies\Microsoft\Dsh') {
@@ -520,6 +571,13 @@ $tasks = @(
     '\Microsoft\Windows\Power Efficiency Diagnostics\AnalyzeSystem',
     '\Microsoft\Windows\CloudExperienceHost\CreateObjectTask'
 )
+$taskBakFile = Join-Path $BakDir 'tasks-backup.json'
+$existingTaskBak = @()
+if (Test-Path $taskBakFile) {
+    try { $existingTaskBak = @(Get-Content $taskBakFile -Raw | ConvertFrom-Json) } catch { }
+}
+$tasksDisabledList = [System.Collections.Generic.List[string]]::new($existingTaskBak)
+
 $taskOff = 0
 foreach ($t in $tasks) {
     try {
@@ -527,11 +585,19 @@ foreach ($t in $tasks) {
         $tn = Split-Path $t -Leaf
         $st = Get-ScheduledTask -TaskPath $tp -TaskName $tn -ErrorAction Stop
         if ($st.State -ne 'Disabled') {
-            Disable-ScheduledTask -TaskPath $tp -TaskName $tn -ErrorAction Stop | Out-Null
-            $taskOff++
-            Log ('  - task off: {0}' -f $tn) 'DarkGray'
+            if ($DryRun) {
+                Log ('  - [DRY] task off: {0}' -f $tn) 'DarkGray'
+            } else {
+                Disable-ScheduledTask -TaskPath $tp -TaskName $tn -ErrorAction Stop | Out-Null
+                if (-not $tasksDisabledList.Contains($t)) { $tasksDisabledList.Add($t) }
+                $taskOff++
+                Log ('  - task off: {0}' -f $tn) 'DarkGray'
+            }
         }
     } catch { }
+}
+if (-not $DryRun -and $tasksDisabledList.Count -gt 0) {
+    $tasksDisabledList | ConvertTo-Json | Set-Content -Path $taskBakFile -Encoding UTF8
 }
 Log ('  {0} telemetry/junk scheduled tasks disabled' -f $taskOff)
 
@@ -633,7 +699,13 @@ if ($SkipDebloat) {
         'MicrosoftCorporationII.MicrosoftFamily',
         'MicrosoftCorporationII.QuickAssist',
         'Microsoft.WidgetsPlatformRuntime',
-        'Microsoft.StartExperiencesApp'
+        'Microsoft.StartExperiencesApp',
+        'Microsoft.Copilot',
+        'Microsoft.549981C3F5F10',
+        'Microsoft.WindowsMaps',
+        'Microsoft.ZuneVideo',
+        'Microsoft.People',
+        'Microsoft.MicrosoftStickyNotes'
     )
     if (-not $hasCam) { $RemoveApps += 'Microsoft.WindowsCamera' }
 
@@ -668,7 +740,7 @@ if ($SkipCleanup) {
 } else {
     function Clear-Dir([string]$Path, [string]$Label) {
         if (-not (Test-Path $Path)) { Log ('  - {0}: not present' -f $Label) 'DarkGray'; return }
-        $skip = @('opencode','Win11GamingSetup')
+        $skip = @('Win11GamingSetup')
         $before = (Get-ChildItem $Path -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
         Get-ChildItem $Path -Force -ErrorAction SilentlyContinue | Where-Object { $skip -notcontains $_.Name } | ForEach-Object {
             try { Remove-Item $_.FullName -Recurse -Force -ErrorAction Stop } catch { }
@@ -782,6 +854,11 @@ function Set-SvcStart {
         $w = Get-CimInstance Win32_Service -Filter ("Name='{0}'" -f $n) -ErrorAction SilentlyContinue
         if (-not $w) { continue }
         if (-not $svcOriginal.ContainsKey($n)) { $svcOriginal[$n] = [int](Get-SvcStartValue $n) }
+        if ($DryRun) {
+            Log ('  [DRY] SET  {0,-42} {1,-9} -> {2,-9} {3}' -f $n, $w.StartMode, $StartValue, $Why) 'DarkGray'
+            $script:Changed++
+            continue
+        }
         if ($StartValue -eq 'disabled') {
             $runningDeps = @(Get-Service -Name $n -ErrorAction SilentlyContinue).DependentServices |
                 Where-Object { $_.Status -eq 'Running' -and $Protected -notcontains $_.Name }
@@ -882,8 +959,12 @@ Set-SvcStart 'PcaSvc' 'disabled' 'compat assistant'
 Set-SvcStart 'wisvc' 'disabled' 'insider service'
 
 Log '-- Consumer / cloud / notifications --'
-Set-SvcStart 'WpnUserService*' 'disabled' 'push (per-user)'
-Set-SvcStart 'WpnService' 'disabled' 'push notifications'
+if ($KeepNotifications) {
+    Log '  KEEP  WpnService / WpnUserService (requested -KeepNotifications)' 'DarkGray'
+} else {
+    Set-SvcStart 'WpnUserService*' 'disabled' 'push (per-user)'
+    Set-SvcStart 'WpnService' 'disabled' 'push notifications'
+}
 Set-SvcStart 'CDPUserSvc*' 'disabled' 'connected devices (per-user)'
 Set-SvcStart 'CDPSvc' 'disabled' 'connected devices platform'
 Set-SvcStart 'OneSyncSvc*' 'disabled' 'mail/calendar sync'
@@ -1110,7 +1191,7 @@ Log ('  Nagle disabled on {0} interface(s)' -f $nagleCount) 'Green'
 # NIC power saving off (fixes packet drops / random latency spikes)
 try {
     Get-NetAdapter -Physical -ErrorAction Stop | ForEach-Object {
-        try { Set-NetAdapterPowerManagement -Name $_.Name -AllowComputerToTurnOffDevice Disabled -ErrorAction Stop | Out-Null } catch { }
+        try { $pm = $_ | Get-NetAdapterPowerManagement -ErrorAction SilentlyContinue; if ($pm) { $pm.AllowComputerToTurnOffDevice = 'Disabled'; $pm | Set-NetAdapterPowerManagement -ErrorAction Stop } } catch { }
         try { Set-NetAdapterAdvancedProperty -Name $_.Name -DisplayName 'Energy Efficient Ethernet' -DisplayValue 'Disabled' -ErrorAction Stop | Out-Null } catch { }
         try { Disable-NetAdapterRsc -Name $_.Name -ErrorAction Stop | Out-Null } catch { }
     }
@@ -1189,29 +1270,84 @@ $rows | ConvertTo-Json -Depth 3 | Set-Content -Path $jsonPath -Encoding UTF8
 Log ('  Service state saved: {0} entries -> {1}' -f $rows.Count, $jsonPath) 'Green'
 
 $revert = @'
+# © Mayanktaker Computers & Web Development | https://mayanktaker.com
 # Revert.ps1 - undo Win11 Gaming Setup (run as Administrator)
 #Requires -RunAsAdministrator
 $ErrorActionPreference = 'Continue'
 
 $root = 'C:\ProgramData\Win11GamingSetup'
+$logDir = Join-Path $root 'logs'
+if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+$revertLog = Join-Path $logDir ('revert-{0}.log' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+
+function RLog([string]$msg, [string]$color = 'Gray') {
+    Write-Host $msg -ForegroundColor $color
+    Add-Content -Path $revertLog -Value ('[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss'), $msg) -ErrorAction SilentlyContinue
+}
+
+RLog ('=== Reverting Windows Gaming Setup ({0}) ===' -f (Get-Date)) 'Cyan'
+
+# 1. Services
 $json = Join-Path $root 'backup\services-backup.json'
 if (Test-Path $json) {
     $rows = Get-Content $json -Raw | ConvertFrom-Json
     foreach ($r in $rows) {
         $v = switch ([int]$r.Start) { 0 {'boot'} 1 {'system'} 2 {'auto'} 3 {'demand'} 4 {'disabled'} default {'demand'} }
         & sc.exe config $r.Name start= $v | Out-Null
-        Write-Host ("  restored {0} -> {1}" -f $r.Name, $v) -ForegroundColor Green
+        RLog ("  restored {0} -> {1}" -f $r.Name, $v) 'Green'
     }
 } else {
-    Write-Host "  services-backup.json not found: $json" -ForegroundColor Yellow
+    RLog "  services-backup.json not found: $json" 'Yellow'
 }
 
+# 2. Registry backups
 Get-ChildItem (Join-Path $root 'backup') -Filter '*.reg' -ErrorAction SilentlyContinue | ForEach-Object {
     & reg.exe import $_.FullName 2>&1 | Out-Null
-    Write-Host ("  imported {0}" -f $_.Name) -ForegroundColor Green
+    RLog ("  imported {0}" -f $_.Name) 'Green'
 }
 
-# DNS: restore the original resolver list (DHCP automatic if it was empty)
+# 3. Power scheme & hibernation
+$pSchemeFile = Join-Path $root 'backup\power-scheme.txt'
+if (Test-Path $pSchemeFile) {
+    try {
+        $scheme = (Get-Content $pSchemeFile -Raw).Trim()
+        if ($scheme) {
+            & powercfg.exe /setactive $scheme 2>&1 | Out-Null
+            & powercfg.exe /h on 2>&1 | Out-Null
+            RLog ("  restored power scheme -> {0} (hibernation ON)" -f $scheme) 'Green'
+        }
+    } catch {
+        RLog ("  power scheme restore failed: {0}" -f $_.Exception.Message) 'Yellow'
+    }
+}
+
+# 4. SMB1 configuration
+$smbReg = Join-Path $root 'backup\smb1.reg'
+if (Test-Path $smbReg) {
+    & reg.exe import $smbReg 2>&1 | Out-Null
+    try { Set-SmbServerConfiguration -EnableSMB1Protocol $true -Force -ErrorAction SilentlyContinue } catch { }
+    RLog "  restored SMB1 configuration" 'Green'
+}
+
+# 5. Scheduled tasks
+$taskJson = Join-Path $root 'backup\tasks-backup.json'
+if (Test-Path $taskJson) {
+    try {
+        $tList = Get-Content $taskJson -Raw | ConvertFrom-Json
+        foreach ($t in $tList) {
+            $tp = (Split-Path $t -Parent).TrimEnd('\') + '\'
+            $tn = Split-Path $t -Leaf
+            try {
+                Enable-ScheduledTask -TaskPath $tp -TaskName $tn -ErrorAction Stop | Out-Null
+                RLog ("  enabled task: {0}" -f $tn) 'Green'
+            } catch { }
+        }
+    } catch {
+        RLog ("  tasks restore failed: {0}" -f $_.Exception.Message) 'Yellow'
+    }
+}
+
+# 6. DNS: restore original resolver list
 $dnsBak = Join-Path $root 'backup\dns-backup.json'
 if (Test-Path $dnsBak) {
     try {
@@ -1221,14 +1357,14 @@ if (Test-Path $dnsBak) {
             } else {
                 Reset-DnsClientServerAddress -InterfaceIndex $r.InterfaceIndex -ErrorAction SilentlyContinue
             }
-            Write-Host ("  restored DNS on {0}" -f $r.Name) -ForegroundColor Green
+            RLog ("  restored DNS on {0}" -f $r.Name) 'Green'
         }
     } catch {
-        Write-Host ("  DNS restore failed: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
+        RLog ("  DNS restore failed: {0}" -f $_.Exception.Message) 'Yellow'
     }
 }
 
-# Undo the search UI disable: task, renamed executable, owner
+# 7. Undo search UI disable: tasks, renamed executable, owner
 & schtasks.exe /Delete /TN 'SearchHost-Kill' /F 2>&1 | Out-Null
 & schtasks.exe /Delete /TN 'SearchHost-Trim' /F 2>&1 | Out-Null
 $marker = Join-Path $root 'backup\searchui-disabled.json'
@@ -1242,17 +1378,18 @@ if (Test-Path $marker) {
             & icacls.exe $disabled /grant '*S-1-5-32-544:F' 2>&1 | Out-Null
             Rename-Item -Path $disabled -NewName (Split-Path $original -Leaf) -Force -ErrorAction Stop
             & icacls.exe $original /setowner 'NT SERVICE\TrustedInstaller' 2>&1 | Out-Null
-            Write-Host ("  restored {0}" -f $original) -ForegroundColor Green
+            RLog ("  restored {0}" -f $original) 'Green'
         }
         Remove-Item $marker -Force -ErrorAction SilentlyContinue
     } catch {
-        Write-Host ("  SearchHost restore failed: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
+        RLog ("  SearchHost restore failed: {0}" -f $_.Exception.Message) 'Yellow'
     }
 }
 
-Write-Host ''
-Write-Host 'Revert complete. Reboot recommended.' -ForegroundColor Cyan
-Write-Host 'Note: uninstalled Store apps have to be installed again from the Store.' -ForegroundColor Yellow
+RLog ''
+RLog 'Revert complete. Reboot recommended.' 'Cyan'
+RLog 'Note: uninstalled Store apps have to be installed again from the Store.' 'Yellow'
+RLog ('Revert log: {0}' -f $revertLog) 'DarkGray'
 '@
 $revertTargets = @(
     (Join-Path $Root 'Revert.ps1'),
@@ -1265,10 +1402,13 @@ foreach ($rt in ($revertTargets | Select-Object -Unique)) {
 # ================================================================ 10. SUMMARY
 Section 'Summary'
 $freeAfter = [math]::Round((Get-PSDrive -Name ($env:SystemDrive -replace ':','')).Free / 1GB, 2)
+$elapsed = $script:Stopwatch.Elapsed
+$elapsedStr = '{0}m {1}s' -f [math]::Floor($elapsed.TotalMinutes), $elapsed.Seconds
 Log ('  System drive free space : {0} GB -> {1} GB  (+{2:N1} GB)' -f $freeBefore, $freeAfter, ($freeAfter - $freeBefore)) 'White'
 Log ('  Services changed        : {0}' -f $script:Changed) 'White'
 Log ('  Scheduled tasks off     : {0}' -f $taskOff) 'White'
 Log ('  Store apps removed      : {0}' -f $appsRemoved) 'White'
+Log ('  Time elapsed            : {0}' -f $elapsedStr) 'White'
 Log ('  Log                     : {0}' -f $script:LogFile) 'DarkGray'
 Log ('  Revert                  : {0}' -f (Join-Path $ScriptDir 'Revert.ps1')) 'DarkGray'
 Log ''

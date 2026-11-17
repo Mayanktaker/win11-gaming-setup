@@ -1,4 +1,5 @@
 @echo off
+rem © Mayanktaker Computers & Web Development | https://mayanktaker.com
 title Windows Gaming Setup - Run as Administrator
 cd /d "%~dp0"
 

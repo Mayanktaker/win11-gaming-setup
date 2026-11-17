@@ -142,9 +142,13 @@ this step PowerShell may refuse to run the script.
   -KeepPrintSpooler         keep printing enabled
   -KeepWindowsSearch        keep the search indexer (WSearch)
   -KeepDefenderDailyScan    keep a daily Defender scan at 03:00
+  -KeepSearchUI             keep the Start-menu search UI (default: fully disabled)
+  -KeepCopilot              keep Copilot and standalone Copilot app
+  -KeepNotifications        keep push notification services (Discord/Slack/Telegram)
+  -EnableHAGS               enable Hardware-Accelerated GPU Scheduling (modern GPUs)
+  -DryRun                   preview changes without modifying system
   -NoLAN                    force LAN discovery services off (offline gaming PC)
   -KeepSMB1                 keep SMB1 (very old NAS / Windows XP devices)
-  -KeepSearchUI             keep the Start-menu search UI (default: fully disabled)
   -SkipDns                  do not change DNS servers
   -DnsKeepLocalFirst        keep the router/AD DNS first, append fastest public DNS
   -SkipDebloat              do not remove Store apps

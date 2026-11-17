@@ -6,7 +6,7 @@
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?style=flat-square&logo=powershell)
 ![Admin](https://img.shields.io/badge/requires-Administrator-red?style=flat-square)
 ![Revert](https://img.shields.io/badge/revert-included-success?style=flat-square)
-![Version](https://img.shields.io/badge/version-1.3.1-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.4.0-blue?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
 ---
@@ -255,6 +255,10 @@ See [Revert](#-revert--undo-everything).
 | `-KeepWindowsSearch` | Keep the search indexer (`WSearch`) |
 | `-KeepDefenderDailyScan` | Keep a daily Defender scan at 03:00 |
 | `-KeepSearchUI` | Keep the Start-menu search UI (default: fully disabled) |
+| `-KeepCopilot` | Keep Windows Copilot and the Copilot app |
+| `-KeepNotifications` | Keep push notification services (`WpnService`, `WpnUserService`) for apps like Discord/Slack/Telegram |
+| `-EnableHAGS` | Enable Hardware-Accelerated GPU Scheduling (reduces latency on modern GPUs) |
+| `-DryRun` | Log what would change without modifying system settings |
 | `-SkipDebloat` | Do not remove Store apps |
 | `-SkipCleanup` | Skip disk cleanup and the WU cache reset |
 | `-SkipRestorePoint` | Do not create a System Restore point |
@@ -312,8 +316,12 @@ powershell -ExecutionPolicy Bypass -File .\Revert.ps1
 |---|---|
 | Service start types | `backup\services-backup.json` |
 | Registry values | `backup\*.reg` imported |
+| Power scheme & hibernation | `backup\power-scheme.txt` + `powercfg /h on` |
+| Scheduled tasks | `backup\tasks-backup.json` re-enabled |
+| SMB1 configuration | `backup\smb1.reg` + `Set-SmbServerConfiguration` |
 | DNS servers | `backup\dns-backup.json` (or DHCP automatic) |
 | Search UI | `SearchHost.exe.disabled` renamed back, owner restored, `SearchHost-Kill` / `SearchHost-Trim` tasks removed |
+| Logging | Full audit trail written to `logs\revert-*.log` |
 
 > 📌 Uninstalled Store apps are **not** reinstalled automatically — get them from the Microsoft Store. A reboot after revert is recommended.
 

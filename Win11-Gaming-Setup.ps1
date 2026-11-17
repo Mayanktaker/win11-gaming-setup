@@ -118,7 +118,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
-$ScriptVersion = '1.3.0'
+$ScriptVersion = '1.3.1'
 
 # ---------------------------------------------------------------- self-elevate
 if (-not $ElevatedChild) {
@@ -178,6 +178,16 @@ function Set-Reg {
         Log ('  ! {0}\{1} -> {2}' -f $Path, $Name, $_.Exception.Message) 'DarkYellow'
         return $false
     }
+}
+
+function Get-SvcStartValue {
+    param([string]$Name)
+    $p = "HKLM:\SYSTEM\CurrentControlSet\Services\$Name"
+    if (Test-Path $p) {
+        $v = (Get-ItemProperty $p -ErrorAction SilentlyContinue).Start
+        if ($null -ne $v) { return [int]$v }
+    }
+    return 3
 }
 
 Log ('Gaming Setup v{0}  |  {1}  |  {2}' -f $ScriptVersion, (Get-Date), $env:COMPUTERNAME) 'White'
@@ -763,16 +773,6 @@ function Resolve-SvcName {
         return @(Get-Service -Name $Pattern -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
     }
     return @($Pattern)
-}
-
-function Get-SvcStartValue {
-    param([string]$Name)
-    $p = "HKLM:\SYSTEM\CurrentControlSet\Services\$Name"
-    if (Test-Path $p) {
-        $v = (Get-ItemProperty $p -ErrorAction SilentlyContinue).Start
-        if ($null -ne $v) { return [int]$v }
-    }
-    return 3
 }
 
 function Set-SvcStart {

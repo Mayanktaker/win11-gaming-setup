@@ -37,7 +37,7 @@ if (Test-Path $dnsBak) {
     }
 }
 
-# Undo the search UI disable: tasks, renamed executable, owner
+# Undo the search UI disable: task, renamed executable, owner
 & schtasks.exe /Delete /TN 'SearchHost-Kill' /F 2>&1 | Out-Null
 & schtasks.exe /Delete /TN 'SearchHost-Trim' /F 2>&1 | Out-Null
 $marker = Join-Path $root 'backup\searchui-disabled.json'

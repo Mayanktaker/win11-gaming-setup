@@ -66,6 +66,11 @@
     Do not disable SMB1. Only needed for very old NAS boxes or Windows XP
     devices that cannot speak SMB2/3. SMB1 is otherwise disabled for security.
 
+.PARAMETER KeepSearchUI
+    Keep the Windows 11 Start-menu search UI (SearchHost + its WebView2 tree).
+    By default it is fully disabled: icon hidden, host renamed and a logon
+    cleanup task installed. Start menu and app launching still work.
+
 .PARAMETER NoPause
     Do not wait for a key press at the end (used for unattended runs).
 
@@ -96,13 +101,14 @@ param(
     [switch]$KeepDefenderDailyScan,
     [switch]$NoLAN,
     [switch]$KeepSMB1,
+    [switch]$KeepSearchUI,
     [switch]$NoPause,
     [switch]$ElevatedChild
 )
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
-$ScriptVersion = '1.1.1'
+$ScriptVersion = '1.2.0'
 
 # ---------------------------------------------------------------- self-elevate
 if (-not $ElevatedChild) {
@@ -110,7 +116,7 @@ if (-not $ElevatedChild) {
     $isAdmin = (New-Object Security.Principal.WindowsPrincipal($wid)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $isAdmin) {
         $fwd = @()
-        foreach ($n in 'SkipCleanup','SkipRestorePoint','KeepPrintSpooler','KeepWindowsSearch','DisableSysMain','DisableMouseAcceleration','EmptyRecycleBin','DeepComponentCleanup','SkipDebloat','KeepDefenderDailyScan','NoLAN','KeepSMB1','NoPause') {
+        foreach ($n in 'SkipCleanup','SkipRestorePoint','KeepPrintSpooler','KeepWindowsSearch','DisableSysMain','DisableMouseAcceleration','EmptyRecycleBin','DeepComponentCleanup','SkipDebloat','KeepDefenderDailyScan','NoLAN','KeepSMB1','KeepSearchUI','NoPause') {
             if ((Get-Variable -Name $n -ValueOnly)) { $fwd += "-$n" }
         }
         Write-Host ''
@@ -368,6 +374,99 @@ Set-Reg $searchCu 'SearchboxTaskbarMode' 1
 Set-Reg 'HKCU:\Software\Policies\Microsoft\Windows\Explorer' 'DisableSearchBoxSuggestions' 1
 Log '  Start menu search: Bing/web/cloud results OFF, local search only'
 
+# --- Fully disable the search UI unless the user opts out -----------------
+# On Windows 11 the search UI is SearchHost.exe plus an Edge WebView2 tree
+# (~250 MB). Hiding the icon alone is not enough: the host still preloads.
+# The host is renamed (undoable), a logon task removes any resident copy,
+# and the taskbar entry is hidden. Start menu / app launching still work.
+$searchMarker = Join-Path $BakDir 'searchui-disabled.json'
+$killTaskName = 'SearchHost-Kill'
+if ($KeepSearchUI) {
+    & schtasks.exe /Delete /TN $killTaskName /F 2>&1 | Out-Null
+    if (Test-Path $searchMarker) {
+        try {
+            $m = Get-Content $searchMarker -Raw | ConvertFrom-Json
+            $disabled = $m.DisabledPath
+            $original = $m.OriginalPath
+            if ((Test-Path $disabled) -and -not (Test-Path $original)) {
+                & takeown.exe /f $disabled 2>&1 | Out-Null
+                & icacls.exe $disabled /grant '*S-1-5-32-544:F' 2>&1 | Out-Null
+                Rename-Item -Path $disabled -NewName (Split-Path $original -Leaf) -Force -ErrorAction Stop
+                & icacls.exe $original /setowner 'NT SERVICE\TrustedInstaller' 2>&1 | Out-Null
+                Log '  SearchHost.exe restored (name + owner)' 'Green'
+            }
+            Remove-Item $searchMarker -Force -ErrorAction SilentlyContinue
+        } catch {
+            Log ('  SearchHost restore failed: {0}' -f $_.Exception.Message) 'DarkYellow'
+        }
+    }
+    Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' 'SearchboxTaskbarMode' 1
+    Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'SearchboxTaskbarMode' 1
+    Log '  Search UI kept (-KeepSearchUI)' 'DarkGray'
+} else {
+    # 1. Hide the taskbar search entry on both Windows 10 and Windows 11
+    Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' 'SearchboxTaskbarMode' 0
+    Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'SearchboxTaskbarMode' 0
+
+    # 2. Locate SearchHost.exe (absent on most LTSC images)
+    $searchExe = $null
+    foreach ($k in @(
+        'C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe',
+        'C:\Windows\SystemApps\Microsoft.Windows.Search_cw5n1h2txyewy\SearchHost.exe'
+    )) { if (Test-Path $k) { $searchExe = $k; break } }
+    if (-not $searchExe) {
+        try {
+            $cbs = Get-AppxPackage -Name 'MicrosoftWindows.Client.CBS' -ErrorAction Stop
+            if ($cbs) {
+                foreach ($app in ($cbs | Get-AppxPackageManifest -ErrorAction SilentlyContinue |
+                        ForEach-Object { $_.Package.Applications.Application })) {
+                    if ($app.Executable -eq 'SearchHost.exe') {
+                        $cand = Join-Path $cbs.InstallLocation $app.Executable
+                        if (Test-Path $cand) { $searchExe = $cand; break }
+                    }
+                }
+            }
+        } catch { }
+    }
+
+    # 3. Kill any resident host, then rename the executable (undoable)
+    Stop-Process -Name SearchHost -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+    if ($searchExe -and (Test-Path ($searchExe + '.disabled'))) {
+        Log '  SearchHost.exe already disabled' 'DarkGray'
+    } elseif ($searchExe -and (Test-Path $searchExe)) {
+        try {
+            & takeown.exe /f $searchExe 2>&1 | Out-Null
+            & icacls.exe $searchExe /grant '*S-1-5-32-544:F' 2>&1 | Out-Null
+            $disabledPath = $searchExe + '.disabled'
+            if (Test-Path $disabledPath) { Remove-Item $disabledPath -Force -ErrorAction SilentlyContinue }
+            Rename-Item -Path $searchExe -NewName 'SearchHost.exe.disabled' -Force -ErrorAction Stop
+            [PSCustomObject]@{
+                OriginalPath = $searchExe
+                DisabledPath = $disabledPath
+                DisabledAt   = (Get-Date -Format o)
+            } | ConvertTo-Json | Set-Content -Path $searchMarker -Encoding UTF8
+            Log ('  SearchHost.exe disabled -> {0}' -f (Split-Path $disabledPath -Leaf)) 'Green'
+        } catch {
+            Log ('  SearchHost rename failed: {0}' -f $_.Exception.Message) 'DarkYellow'
+        }
+    } else {
+        Log '  SearchHost.exe not found (LTSC) - nothing to rename' 'DarkGray'
+    }
+
+    # 4. Logon cleanup task: belt and braces for updates that restore the file
+    $killer = @'
+# kill-searchhost.ps1 - keep the disabled search UI out of memory.
+Stop-Process -Name SearchHost -Force -ErrorAction SilentlyContinue
+'@
+    $killerPath = Join-Path $Root 'kill-searchhost.ps1'
+    Set-Content -Path $killerPath -Value $killer -Encoding ASCII
+    & schtasks.exe /Delete /TN $killTaskName /F 2>&1 | Out-Null
+    $tr = 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}"' -f $killerPath
+    & schtasks.exe /Create /TN $killTaskName /TR $tr /SC ONLOGON /DELAY 0000:15 /RL HIGHEST /RU SYSTEM /F 2>&1 | Out-Null
+    Log '  Search UI fully disabled; logon task SearchHost-Kill installed' 'Green'
+}
+
 # --- Windows 10 extras (the keys are harmless on Windows 11) ---
 # Timeline / Activity history: stop the cloud upload of your activity
 foreach ($n in 'EnableActivityFeed','PublishUserActivities','UploadUserActivities') {
@@ -435,8 +534,8 @@ try {
 
         # Low CPU priority: MsMpEng runs in the background and yields CPU to games
         Set-MpSafe 'EnableLowCpuPriority' $true 'yield CPU to games'
-        # Cap scan CPU at 20% (default is 50%)
-        Set-MpSafe 'ScanAvgCPULoadFactor' 20 'scan CPU cap'
+        # Cap scan CPU at 10% (default 50%) - scans stay in the background
+        Set-MpSafe 'ScanAvgCPULoadFactor' 10 'scan CPU cap'
         if (-not $KeepDefenderDailyScan) {
             # 8 = Never (real-time protection stays enabled)
             Set-MpSafe 'ScanScheduleDay' 8 'no scheduled scan'
@@ -452,6 +551,23 @@ try {
         $pref = Get-MpPreference
         Log ('  Low CPU priority: {0} | Scan CPU cap: {1}% | Scheduled scan: {2}' -f $pref.EnableLowCpuPriority, $pref.ScanAvgCPULoadFactor, $pref.ScanScheduleDay) 'Green'
         Log '  Real-time protection stays ON (security intact)' 'DarkGray'
+
+        # Sense = Defender for Endpoint agent. On consumer/LTSC PCs it is never
+        # onboarded, but the service still burns memory with nothing to do.
+        $senseOnboarded = $false
+        try {
+            $senseOnboarded = (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows Advanced Threat Protection\Status\OnboardingCompleted') -or
+                              (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows Advanced Threat Protection\Status\OnboardingInfo')
+        } catch { }
+        $sense = Get-CimInstance Win32_Service -Filter "Name='Sense'" -ErrorAction SilentlyContinue
+        if ($sense -and -not $senseOnboarded) {
+            if (-not $svcOriginal.ContainsKey('Sense')) { $svcOriginal['Sense'] = [int](Get-SvcStartValue 'Sense') }
+            Stop-Service -Name 'Sense' -Force -ErrorAction SilentlyContinue
+            & sc.exe config Sense start= disabled 2>&1 | Out-Null
+            Log '  Sense (Defender for Endpoint) disabled - no MDE onboarding found' 'Green'
+        } elseif ($sense) {
+            Log '  KEEP Sense (this PC is onboarded to Defender for Endpoint)' 'DarkGray'
+        }
     } else {
         Log '  Set-MpPreference not available (third-party antivirus?) - skipped' 'DarkYellow'
     }
@@ -621,7 +737,7 @@ $Protected = @(
     'RpcSs','DcomLaunch','RpcEptMapper','LSM','SamSs','Winmgmt','EventLog','Schedule','ProfSvc','gpsvc',
     'UserManager','BrokerInfrastructure','SystemEventsBroker','Power','PlugPlay','nsi','Dhcp','Dnscache',
     'NlaSvc','netprofm','Nlm','Ndu','LanmanWorkstation','LanmanServer','lmhosts','iphlpsvc','mpssvc',
-    'WinDefend','SecurityHealthService','wscsvc','SgrmBroker','Sense','CryptSvc','BITS','wuauserv',
+    'WinDefend','SecurityHealthService','wscsvc','SgrmBroker','CryptSvc','BITS','wuauserv',
     'TrustedInstaller','msiserver','UsoSvc','WaaSMedicSvc','Audiosrv','AudioEndpointBuilder',
     'Wcmsvc','Themes','TextInputManagementService','CoreMessagingRegistrar','StateRepository','TokenBroker',
     'KeyIso','VaultSvc','AppXSvc','ClipSVC','InstallService','LicenseManager','wlidsvc','XblAuthManager',
@@ -1021,6 +1137,28 @@ if (Test-Path $json) {
 Get-ChildItem (Join-Path $root 'backup') -Filter '*.reg' -ErrorAction SilentlyContinue | ForEach-Object {
     & reg.exe import $_.FullName 2>&1 | Out-Null
     Write-Host ("  imported {0}" -f $_.Name) -ForegroundColor Green
+}
+
+# Undo the search UI disable: task, renamed executable, owner
+& schtasks.exe /Delete /TN 'SearchHost-Kill' /F 2>&1 | Out-Null
+& schtasks.exe /Delete /TN 'SearchHost-Trim' /F 2>&1 | Out-Null
+$marker = Join-Path $root 'backup\searchui-disabled.json'
+if (Test-Path $marker) {
+    try {
+        $m = Get-Content $marker -Raw | ConvertFrom-Json
+        $disabled = $m.DisabledPath
+        $original = $m.OriginalPath
+        if ((Test-Path $disabled) -and -not (Test-Path $original)) {
+            & takeown.exe /f $disabled 2>&1 | Out-Null
+            & icacls.exe $disabled /grant '*S-1-5-32-544:F' 2>&1 | Out-Null
+            Rename-Item -Path $disabled -NewName (Split-Path $original -Leaf) -Force -ErrorAction Stop
+            & icacls.exe $original /setowner 'NT SERVICE\TrustedInstaller' 2>&1 | Out-Null
+            Write-Host ("  restored {0}" -f $original) -ForegroundColor Green
+        }
+        Remove-Item $marker -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Host ("  SearchHost restore failed: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
+    }
 }
 
 Write-Host ''

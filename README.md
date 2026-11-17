@@ -6,7 +6,7 @@
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?style=flat-square&logo=powershell)
 ![Admin](https://img.shields.io/badge/requires-Administrator-red?style=flat-square)
 ![Revert](https://img.shields.io/badge/revert-included-success?style=flat-square)
-![Version](https://img.shields.io/badge/version-1.1.1-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.2.0-blue?style=flat-square)
 
 ---
 
@@ -19,9 +19,9 @@
 | ⚡ **Power** | High Performance plan, CPU min state 100 %, PCIe ASPM off, sleep never, monitor off after 10 min |
 | 🛑 **Fast Startup / Hibernate** | Both off — removes `hiberfil.sys` and power-transition glitches |
 | 🎯 **Gaming** | GameDVR / Game Bar recording off, Game Mode on, MMCSS *Games* profile boosted, Win32 priority 38, power throttling off |
-| 🛡️ **Defender** | Low CPU priority, 20 % scan CPU cap, scheduled scan off — **real-time protection stays ON** |
+| 🛡️ **Defender** | Low CPU priority, 10 % scan CPU cap, scheduled scan off, unused Endpoint agent (`Sense`) off — **real-time protection stays ON** |
 | 🧹 **Background junk** | Copilot, Widgets, Phone Link background access, ads, suggestions, telemetry tasks |
-| 🔍 **Search** | Start-menu search becomes local-only: Bing/web results, cloud search, search highlights and the suggestion dropdown are off (the search UI still works) |
+| 🔍 **Search** | Fully disabled by default: taskbar icon hidden, `SearchHost.exe` renamed, logon cleanup task installed — frees ~250 MB. Start menu still opens; use `-KeepSearchUI` to keep search |
 | 📦 **Store apps** | 19 apps removed (Photos, Snipping Tool, Solitaire, Media Player stay) |
 | 💾 **Cleanup** | Temp, WER, crash dumps, shader caches, icon/thumbnail cache, WinRE leftover, Windows Update cache |
 | ⚙️ **Services** | ~50 non-essential services disabled, hardware-aware (WiFi / BT / camera / scanner / fingerprint) |
@@ -64,6 +64,7 @@ The script re-launches itself elevated, prints a coloured live log, and ends wit
 | `-KeepWindowsSearch` | Keep Windows Search indexing (recommended if you search files a lot) |
 | `-NoLAN` | Force LAN-discovery services off even if a LAN is detected (offline gaming PC) |
 | `-KeepSMB1` | Keep SMB1 (only for very old NAS / Windows XP devices) |
+| `-KeepSearchUI` | Keep the Start-menu search UI (default: fully disabled) |
 | `-KeepDefenderDailyScan` | Keep a daily Defender scan at 03:00 |
 | `-SkipDebloat` | Do not remove any Store app |
 | `-SkipCleanup` | Skip disk cleanup and the Windows Update cache reset |
@@ -249,6 +250,9 @@ It restores:
 |---|---|
 | Service start types | `backup\services-backup.json` |
 | Registry values | `backup\*.reg` (imported) |
+| Search UI | `SearchHost.exe.disabled` renamed back, owner restored, `SearchHost-Kill` / `SearchHost-Trim` tasks removed |
+
+> A feature update can restore `SearchHost.exe`; the logon task removes any resident copy, so the icon stays hidden and memory stays free.
 
 > Store apps that were uninstalled are **not** restored automatically — reinstall them from the Microsoft Store. Optionally create a restore point before running the script (it does this automatically unless `-SkipRestorePoint`).
 
@@ -284,9 +288,10 @@ The script detects the running build and skips what does not exist instead of fa
 | Widgets, Copilot, Phone Link | policies written | written, ignored if absent |
 | Store app debloat | 19 apps | usually "No removable Store apps found" — normal on LTSC |
 | Search: web/Bing results | off | off (works on both) |
+| Search UI | `SearchHost.exe` renamed + logon task | host usually absent — skipped |
 | Timeline / Activity history | off | off |
 | News and Interests, Meet Now | not present | off |
-| Defender tuning | full parameter set | unsupported parameters skipped one by one |
+| Defender tuning | full parameter set | unsupported parameters skipped one by one; unused `Sense` agent disabled without MDE onboarding |
 | Services | same list | missing services skipped, hardware checks unchanged |
 
 ---
@@ -306,8 +311,9 @@ The script detects the running build and skips what does not exist instead of fa
 ## 🧯 Safety notes
 
 - Run it on a **gaming-only** PC. On a work PC you may want `-KeepPrintSpooler -KeepWindowsSearch -SkipDebloat`.
-- Disabling `WSearch` makes file-content search slower; Start-menu app search still works.
-- Start-menu search is set to **local results only** (no Bing web answers) — typing an app name is instant, typing a question no longer opens a web page.
+- Disabling `WSearch` makes content indexing stop; the **Start menu itself still opens** (app launching is unaffected).
+- The search UI is disabled by default: its icon is hidden, `SearchHost.exe` is renamed to `.disabled`, and a logon task removes any resident copy. Pressing Win still opens Start, but typing a search query returns nothing. Use `-KeepSearchUI` if you need it.
+- `Revert.ps1` restores the executable, its owner, the taskbar icon and the removed tasks.
 - Disabling `Spooler` stops all printing until you re-enable it.
 - `-DeepComponentCleanup` uses `/ResetBase`, which prevents uninstalling installed updates afterwards.
 - Old, unsupported hardware (like the test machine) is still limited by the hardware itself — this script removes software overhead, not physics.

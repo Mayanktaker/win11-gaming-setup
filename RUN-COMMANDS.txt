@@ -95,6 +95,16 @@ this step PowerShell may refuse to run the script.
   network profile is Private, then try  \\<ip-address>  directly to confirm
   file sharing itself works.
 
+  Check the search UI is gone (no SearchHost / no Edge renderer processes):
+
+      Get-Process SearchHost,msedgewebview2 -ErrorAction SilentlyContinue
+      Test-Path 'C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe.disabled'
+      Get-Content 'C:\ProgramData\Win11GamingSetup\backup\searchui-disabled.json'
+
+  By default the taskbar search icon is hidden, SearchHost.exe is renamed to
+  .disabled and a logon task kills any copy Windows restores. Win still opens
+  Start; search queries are not available. Use -KeepSearchUI to restore it.
+
   Check Defender is still protecting you (real-time should be True):
 
       Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled, AntivirusEnabled
@@ -110,6 +120,8 @@ this step PowerShell may refuse to run the script.
       powershell -NoProfile -ExecutionPolicy Bypass -File .\Revert.ps1
 
   Restores service start types and imports every backed-up registry key.
+  It also restores SearchHost.exe (name + owner) and deletes both search
+  cleanup tasks.
   Store apps that were removed must be reinstalled from the Microsoft Store.
 
   Backups live in  C:\ProgramData\Win11GamingSetup\backup
@@ -124,6 +136,7 @@ this step PowerShell may refuse to run the script.
   -KeepDefenderDailyScan    keep a daily Defender scan at 03:00
   -NoLAN                    force LAN discovery services off (offline gaming PC)
   -KeepSMB1                 keep SMB1 (very old NAS / Windows XP devices)
+  -KeepSearchUI             keep the Start-menu search UI (default: fully disabled)
   -SkipDebloat              do not remove Store apps
   -SkipCleanup              skip disk cleanup + Windows Update cache reset
   -SkipRestorePoint         do not create a System Restore point

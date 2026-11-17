@@ -20,6 +20,28 @@ Get-ChildItem (Join-Path $root 'backup') -Filter '*.reg' -ErrorAction SilentlyCo
     Write-Host ("  imported {0}" -f $_.Name) -ForegroundColor Green
 }
 
+# Undo the search UI disable: tasks, renamed executable, owner
+& schtasks.exe /Delete /TN 'SearchHost-Kill' /F 2>&1 | Out-Null
+& schtasks.exe /Delete /TN 'SearchHost-Trim' /F 2>&1 | Out-Null
+$marker = Join-Path $root 'backup\searchui-disabled.json'
+if (Test-Path $marker) {
+    try {
+        $m = Get-Content $marker -Raw | ConvertFrom-Json
+        $disabled = $m.DisabledPath
+        $original = $m.OriginalPath
+        if ((Test-Path $disabled) -and -not (Test-Path $original)) {
+            & takeown.exe /f $disabled 2>&1 | Out-Null
+            & icacls.exe $disabled /grant '*S-1-5-32-544:F' 2>&1 | Out-Null
+            Rename-Item -Path $disabled -NewName (Split-Path $original -Leaf) -Force -ErrorAction Stop
+            & icacls.exe $original /setowner 'NT SERVICE\TrustedInstaller' 2>&1 | Out-Null
+            Write-Host ("  restored {0}" -f $original) -ForegroundColor Green
+        }
+        Remove-Item $marker -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Host ("  SearchHost restore failed: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
+    }
+}
+
 Write-Host ''
 Write-Host 'Revert complete. Reboot recommended.' -ForegroundColor Cyan
 Write-Host 'Note: uninstalled Store apps have to be installed again from the Store.' -ForegroundColor Yellow

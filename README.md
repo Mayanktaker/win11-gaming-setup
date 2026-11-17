@@ -1,363 +1,440 @@
-# 🎮 Win11 Gaming Setup
+# 🎮 Windows Gaming Setup
 
-> One PowerShell script that turns a fresh Windows 10 or 11 install (LTSC included) into a lean, fast, **gaming-only** machine — tweaks, cleanup, debloat and service slimming, with a one-click revert.
+> Turn a fresh Windows 10 / 11 (LTSC included) install into a lean, fast, **gaming-only** PC — with one administrator script and a one-click undo.
 
 ![Platform](https://img.shields.io/badge/platform-Windows%2011%20%7C%2010%20%7C%20LTSC-0078D6?style=flat-square&logo=windows)
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?style=flat-square&logo=powershell)
 ![Admin](https://img.shields.io/badge/requires-Administrator-red?style=flat-square)
 ![Revert](https://img.shields.io/badge/revert-included-success?style=flat-square)
-![Version](https://img.shields.io/badge/version-1.3.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.3.1-blue?style=flat-square)
+![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
 ---
 
-## ✨ What it does
+## 📑 Contents
 
-| Area | Result |
+- [Why does this script exist?](#-why-does-this-script-exist)
+- [Who is it for (and who is it not for)?](#-who-is-it-for-and-who-is-it-not-for)
+- [Measured results](#-measured-results)
+- [Quick start — run it in 10 seconds](#-quick-start--run-it-in-10-seconds)
+- [How the script decides things (detection)](#-how-the-script-decides-things-detection)
+- [Every feature, what it does and why](#-every-feature-what-it-does-and-why)
+- [Command-line flags](#-command-line-flags)
+- [Safety model](#-safety-model)
+- [Revert — undo everything](#-revert--undo-everything)
+- [Windows 10 / LTSC notes](#-windows-10--ltsc-notes)
+- [Verify it worked](#-verify-it-worked)
+- [Troubleshooting](#-troubleshooting)
+- [Honest limitations (read this before believing the hype)](#-honest-limitations-read-this-before-believing-the-hype)
+- [Files, logs and backups](#-files-logs-and-backups)
+- [Publishing to GitHub](#-publishing-to-github)
+- [License](#-license)
+
+---
+
+## 🤔 Why does this script exist?
+
+A default Windows install carries a lot of machinery that a gaming-only PC never uses:
+
+- telemetry uploaders, compatibility appraisers and error-reporting services;
+- Widgets, Copilot, Phone Link, consumer suggestions and ads in Start / Explorer;
+- Store apps you will never open (News, Weather, Teams, Outlook, To Do, Clipchamp…);
+- an indexer (`WSearch`) that keeps the disk busy;
+- a taskbar search UI that preloads Edge's WebView2 renderer (~250 MB of RAM);
+- Windows Update and shader caches that grow to several GB;
+- dozens of services for printing, fax, smart cards, cellular, remote access, sensors, etc.
+
+On an older or modest machine (4–8 GB RAM, a spinning disk, an older CPU) this overhead is not abstract: it shows up as a slow right-click menu, short freezes, high idle RAM and CPU spikes during a game.
+
+Doing all the fixes by hand means 50+ registry edits, service changes and cleanup commands — impossible to remember or repeat on a second PC. This script makes it **one repeatable, reversible step**.
+
+### What this script is *not*
+
+> 📌 It is **not** a driver updater, a "RAM booster", an FPS hack or an overclocking tool. It does **not** change your IP address, does **not** disable Defender / Firewall / SmartScreen / Windows Update, does **not** delete personal files, and does **not** promise extra FPS by magic. It removes software overhead so the hardware you already have is not fighting the OS.
+
+---
+
+## 👥 Who is it for (and who is it not for)?
+
+| Use it when… | Avoid it (or use flags) when… |
 |---|---|
-| 🖱️ **Right-click menu** | Restores the fast classic context menu (Windows 11's WinUI menu is slow on older hardware) |
-| 💨 **UI speed** | Animations, transparency, list-view shadows and the 400 ms menu delay are turned off |
-| ⚡ **Power** | High Performance plan, CPU min state 100 %, PCIe ASPM off, sleep never, monitor off after 10 min |
-| 🛑 **Fast Startup / Hibernate** | Both off — removes `hiberfil.sys` and power-transition glitches |
-| 🎯 **Gaming** | GameDVR / Game Bar recording off, Game Mode on, MMCSS *Games* profile boosted, Win32 priority 38, power throttling off |
-| 🛡️ **Defender** | Low CPU priority, 10 % scan CPU cap, scheduled scan off, unused Endpoint agent (`Sense`) off — **real-time protection stays ON** |
-| 🧹 **Background junk** | Copilot, Widgets, Phone Link background access, ads, suggestions, telemetry tasks |
-| 🔍 **Search** | Fully disabled by default: taskbar icon hidden, `SearchHost.exe` renamed, logon cleanup task installed — frees ~250 MB. Start menu still opens; use `-KeepSearchUI` to keep search |
-| 📦 **Store apps** | 19 apps removed (Photos, Snipping Tool, Solitaire, Media Player stay) |
-| 💾 **Cleanup** | Temp, WER, crash dumps, shader caches, icon/thumbnail cache, WinRE leftover, Windows Update cache |
-| ⚙️ **Services** | ~50 non-essential services disabled, hardware-aware (WiFi / BT / camera / scanner / fingerprint) |
-| 🌐 **Network** | RSS, auto-tuning, Nagle off, QoS reserve 0, NIC power saving off, SMB1 off |
-| ↩️ **Safety** | Restore point attempt + registry backups + auto-generated `Revert.ps1` |
-
-> ⚠️ **No security feature is disabled.** Defender real-time protection, Firewall, SmartScreen, Windows Update, BITS and the SMB/LAN stack are always preserved.
+| The PC is mainly for gaming | You print often → add `-KeepPrintSpooler` |
+| You transfer files over LAN (Windows/Linux shares) | You search file contents all day → add `-KeepWindowsSearch` |
+| You want less background noise and faster Explorer | You need web answers from the Start search box → add `-KeepSearchUI` |
+| You reinstall Windows often and want the same setup every time | It is a corporate / managed work PC |
+| You are comfortable with a UAC prompt and a reboot | You do not have a backup of important files |
 
 ---
 
-## 🚀 Quick start
+## 📊 Measured results
 
-> **Easiest:** just **double-click `RUN-AS-ADMIN.cmd`** (or right-click → *Run as
-> administrator*). It asks for UAC rights at the very start, runs the whole script
-> and keeps the window open when it finishes.
->
-> Copy-paste ready commands with step-by-step instructions are in
-> **[`RUN-COMMANDS.txt`](RUN-COMMANDS.txt)** — open that file on the target PC.
+From the test machine: **i5-2500K, 12 GB DDR3-1333, GTX 750 Ti 2 GB, Windows 11 build 26300**.
+
+| Metric | Before → After | Note |
+|---|---|---|
+| Free space on C: | 44.5 GB → 64.4 GB (**+19.9 GB**) | Temp, WinRE leftover, WU cache, shader/log caches |
+| Store apps | 19 removed | Photos, Snipping Tool, Solitaire, Media Player kept |
+| Service settings | ~51–53 applied, 36+ disabled | Plus a hardware-aware keep list |
+| Telemetry tasks | 13 disabled | Re-runs report 0 because they are already off |
+| Search UI memory | ~250 MB → **0 MB at idle** | Host + its WebView2 renderer tree |
+| DNS resolution | fastest servers chosen (~15 ms) | IP address untouched |
+| Defender scan CPU cap | 50 % → 10 % | Real-time protection stays on |
+
+> ⚠️ FPS gains are not measured or promised. What you get is a lighter desktop, fewer background interruptions and less I/O contention. The hardware is still the hardware.
+
+---
+
+## 🚀 Quick start — run it in 10 seconds
+
+### Option 1 — double-click (easiest)
+
+1. Copy the **whole folder** to the PC.
+2. Double-click **`RUN-AS-ADMIN.cmd`**.
+3. Click **Yes** on the UAC prompt. That is all.
+
+The window stays open and shows the summary when it finishes.
+
+### Option 2 — right-click
+
+Right-click `RUN-AS-ADMIN.cmd` → **Run as administrator** → **Yes**.
+
+### Option 3 — PowerShell
 
 ```powershell
-# 1. Open PowerShell in this folder, unblock the scripts, then run:
+cd "$env:USERPROFILE\Downloads\Win11-Gaming-Setup"
 Get-ChildItem -Path . -Filter *.ps1 | Unblock-File
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Win11-Gaming-Setup.ps1
 ```
 
-Or simply **right-click** `Win11-Gaming-Setup.ps1` → **Run with PowerShell** → press **Yes** on the UAC prompt.
+The script also self-elevates if launched from a non-administrator PowerShell, so it asks for UAC rights by itself.
 
-The script re-launches itself elevated, prints a coloured live log, and ends with a summary:
+**Afterwards: reboot once.** Some service and Explorer changes only fully settle after a restart.
 
-```
-  System drive free space : 44.5 GB -> 64.4 GB  (+19.9 GB)
-  Services changed        : 52
-  Scheduled tasks off     : 13
-  Store apps removed      : 19
-```
+To undo: double-click **`REVERT-AS-ADMIN.cmd`** (details [below](#-revert--undo-everything)).
 
 ---
 
-## 🎛️ Flags
+## 🔍 How the script decides things (detection)
+
+This is not a blind "disable everything" script. Every risky change is guarded by detection.
+
+| What is detected | How | Decision |
+|---|---|---|
+| **OS family** | Build number (22000 = Windows 11) | Win11-only tweaks (classic context menu) skipped on Windows 10 / LTSC |
+| **LTSC / IoT edition** | Caption + SKU | Debloat summary explains that Store apps are normally absent |
+| **WiFi / Bluetooth / camera / scanner / fingerprint / touch** | PnP and network adapter queries | Their services are only disabled when the hardware is *missing* |
+| **System disk type** | `Get-PhysicalDisk.MediaType` | `SysMain` (Superfetch) off on SSD, kept on HDD where prefetch helps |
+| **LAN present** | Private / `DomainAuthenticated` network profile, RFC1918 IPv4 address, local SMB shares, mapped drives | Discovery services (`SSDPSRV`, `upnphost`, `FDResPub`, `fdPHost`) are **kept running and started**; only slimmed when no LAN exists. `-NoLAN` forces the slim path |
+| **SMB1 in use** | Active SMB connection with dialect `1.5` | SMB1 kept automatically for old NAS / XP devices; otherwise disabled for security |
+| **Fastest DNS** | TCP/53 connection latency to Cloudflare, Google, Quad9, OpenDNS | Two fastest resolvers applied; existing DNS kept as fallback; IP never changed |
+| **MDE onboarding** | Presence of Defender-for-Endpoint onboarding keys | Unused `Sense` agent stopped; kept if the PC is actually onboarded |
+| **Service change result** | Registry `Start` value re-read after `sc.exe config` | If Windows refuses the change, it is logged as `NOCHG`, not silently assumed |
+| **Running dependents** | `DependentServices` check | A service with running dependents is skipped (`SKIP`) instead of breaking something |
+| **Re-runs** | Existing `services-backup.json` is loaded first | Original values are **merged**, never overwritten |
+
+---
+
+## 🧩 Every feature, what it does and why
+
+### 1. Explorer / UI responsiveness
+
+| Change | Why | Effect |
+|---|---|---|
+| Classic right-click menu (Win11 only) | The WinUI menu is noticeably slow on older CPUs | Context menu opens immediately |
+| `MenuShowDelay = 20 ms` | Default is 400 ms | Menus feel instant |
+| Animations, transparency, list-view shadows off | Each costs GPU/CPU work on weak integrated graphics | Snappier Explorer, no visual lag |
+| Copilot button / taskbar widgets hidden | Pure background noise | Cleaner taskbar |
+
+### 2. Power plan (gaming profile)
+
+| Change | Why | Effect |
+|---|---|---|
+| High Performance plan active | Avoids CPU downclocking | Consistent frame pacing |
+| Processor minimum state 100 % | Prevents scale-up stutter | Fewer micro-stutters (more heat/power) |
+| PCIe ASPM off | Link power saving can cause latency spikes | More stable GPU/NVMe latency |
+| Sleep / hibernate never, monitor off after 10 min | A gaming PC should not sleep mid-session | No wake-up surprises |
+| Fast Startup + hibernation off | Removes `hiberfil.sys` and power-transition bugs | Disk space + fewer boot issues |
+
+### 3. Gaming registry tweaks
+
+| Change | Why | Effect |
+|---|---|---|
+| GameDVR / Game Bar recording off | Background capture costs CPU/GPU | More headroom in games |
+| Game Mode on | Prioritises the game process | Small, free improvement |
+| MMCSS *Games* profile + Win32 priority 38 | Multimedia scheduling favours the game | Lower audio/input latency |
+| `NetworkThrottlingIndex` max, `PowerThrottlingOff` | Windows otherwise throttles some workloads | Fewer stalls |
+
+### 4. Background junk and telemetry
+
+| Change | Why | Effect |
+|---|---|---|
+| Copilot, Widgets, Phone Link disabled | Always-on background processes and network calls | Lower idle CPU/RAM |
+| Ads, suggestions, consumer features off | Start/Explorer stop recommending things | Cleaner, quieter OS |
+| 13 telemetry / diagnostics tasks disabled | Needless scheduled wake-ups | Less background disk activity |
+| Activity history, News feed, Meet Now off (Win10) | Cloud upload and taskbar feed | Less telemetry and network noise |
+
+### 5. Start menu search — fully disabled by default
+
+| Change | Why | Effect |
+|---|---|---|
+| Web / Bing / cloud results off | Web lookups spawn an Edge renderer in the search UI | No search-related network calls |
+| Taskbar search icon hidden | You do not use it | Cleaner taskbar |
+| `SearchHost.exe` renamed to `.disabled` | Hiding the icon alone does **not** stop the host from preloading | ~250 MB RAM + 6 WebView2 processes gone |
+| Logon task `SearchHost-Kill` | A feature update can restore the executable | Any resident copy is removed after login |
+
+> 📌 The Start menu itself still opens and launches apps — only *searching* is unavailable. `-KeepSearchUI` keeps it, and `Revert.ps1` fully restores it.
+
+### 6. Windows Defender tuning (not disabling)
+
+| Change | Why | Effect |
+|---|---|---|
+| Low CPU priority (`EnableLowCpuPriority`) | Scans yield CPU to the game | No scan-induced stutter |
+| Scan CPU cap 10 % | Default 50 % is aggressive | Scans stay in the background |
+| Scheduled / catch-up scans off | Unnecessary wake-ups | Quieter idle |
+| Network drive / file scanning off | Prevents LAN transfers being slowed by AV | Faster copies |
+| Unused `Sense` agent stopped | Consumer/LTSC PCs are never onboarded to Defender for Endpoint | Saves memory |
+| **Real-time protection stays ON** | Security is not negotiable | You remain protected |
+
+### 7. Store app debloat
+
+| Removed | Kept |
+|---|---|
+| Clipchamp, Bing News / Weather / Search, Outlook, Teams, To Do, Office Hub, Feedback Hub, Get Help, Alarms, Your Phone, Dev Home, Family, Quick Assist, Widgets Runtime, Start Experiences, Camera (only if no camera hardware) | Photos, Snipping Tool, Solitaire, Media Player, Camera (if hardware exists), Paint, Notepad, Terminal, Calculator, Store, Xbox / Gaming services, runtime libraries and codecs |
+
+Apps are removed for **the current user and all users** (provisioned packages too). Less update traffic, fewer background permissions, cleaner Start menu.
+
+### 8. Disk cleanup
+
+| Target | Typical gain |
+|---|---|
+| User + Windows TEMP | 1–4 GB |
+| WinRE leftover (`C:\$WinREAgent`) | 1–2 GB |
+| Windows Update cache (`SoftwareDistribution`, `catroot2`) | 0.5–5 GB |
+| Crash dumps, WER reports, Live Kernel Reports | 100 MB–1 GB |
+| NVIDIA / AMD / DirectX shader caches | 100–800 MB |
+| Delivery Optimization cache | 100 MB–1 GB |
+| Logs older than 7 days, icon/thumbnail caches | 100–500 MB |
+
+The Windows Update cache is fully reset (services stopped, folders renamed and rebuilt). Icon caches are rebuilt automatically — the first Explorer open may take a second.
+
+### 9. Service slimming with a protected core
+
+The script never touches a hard-coded **protected list**: core Windows (`RpcSs`, `EventLog`, `Winmgmt`, `Power`, `PlugPlay`…), LAN/SMB (`LanmanWorkstation`, `LanmanServer`, `lmhosts`, `iphlpsvc`, `mpssvc`, Function Discovery), security (`WinDefend`, `wscsvc`, `mpssvc`, `BITS`, `wuauserv`), audio, GPU and Xbox/gaming services.
+
+Groups that *are* disabled: telemetry/diagnostics, push and cloud sync, parental controls, offline maps, geolocation, media sharing, enterprise/App-V, remote registry/RRAS, fax, smart card, NFC, work folders, indexing (`WSearch`), printing (`Spooler`, opt-out available), plus hardware-absent services.
+
+Every change is logged as `SET`, `KEEP`, `SKIP` or `NOCHG`, so you can see exactly what happened.
+
+### 10. LAN discovery and network tuning
+
+See [detection](#-how-the-script-decides-things-detection). In short: other PCs stay visible on the LAN, SMB2/3 and the firewall groups stay on, and only genuinely unnecessary protocols are disabled.
+
+| Tuning | Why |
+|---|---|
+| RSS on, auto-tuning normal | Multi-core packet processing, good LAN + internet throughput |
+| ECN / timestamps / NetDMA off | Avoids stalls with older routers |
+| Nagle off per active NIC | Lower latency in games |
+| QoS reserve 0 | No bandwidth held back |
+| NIC power saving / EEE / RSC off | No random packet drops |
+| SMB1 off (unless in use) | Security; SMB2/3 serves Windows and Linux shares |
+| Delivery Optimization peering off | Windows updates do not saturate your LAN |
+| Fastest DNS + fallback | Faster name resolution, IP unchanged |
+| DNS cache flush | Fresh lookups after the change |
+
+### 11. Backup and revert
+
+See [Revert](#-revert--undo-everything).
+
+---
+
+## 🎛️ Command-line flags
 
 | Flag | What it does |
 |---|---|
-| `-KeepPrintSpooler` | Keep printing enabled (Print Spooler stays `Automatic`) |
-| `-KeepWindowsSearch` | Keep Windows Search indexing (recommended if you search files a lot) |
-| `-NoLAN` | Force LAN-discovery services off even if a LAN is detected (offline gaming PC) |
-| `-KeepSMB1` | Keep SMB1 (only for very old NAS / Windows XP devices) |
-| `-KeepSearchUI` | Keep the Start-menu search UI (default: fully disabled) |
-| `-SkipDns` | Do not change DNS servers (the IP address is never changed anyway) |
-| `-DnsKeepLocalFirst` | Keep the router/AD DNS as first resolver, append fastest public ones |
+| `-KeepPrintSpooler` | Keep printing enabled |
+| `-KeepWindowsSearch` | Keep the search indexer (`WSearch`) |
 | `-KeepDefenderDailyScan` | Keep a daily Defender scan at 03:00 |
-| `-SkipDebloat` | Do not remove any Store app |
-| `-SkipCleanup` | Skip disk cleanup and the Windows Update cache reset |
-| `-SkipRestorePoint` | Do not create a restore point |
+| `-KeepSearchUI` | Keep the Start-menu search UI (default: fully disabled) |
+| `-SkipDebloat` | Do not remove Store apps |
+| `-SkipCleanup` | Skip disk cleanup and the WU cache reset |
+| `-SkipRestorePoint` | Do not create a System Restore point |
+| `-SkipDns` | Do not touch DNS servers |
+| `-DnsKeepLocalFirst` | Router/AD DNS first, fastest public DNS appended |
 | `-EmptyRecycleBin` | Also empty the Recycle Bin |
-| `-DisableMouseAcceleration` | Mouse acceleration off (FPS aim) — changes the feel, off by default |
-| `-DisableSysMain` | Force-disable SysMain (auto-off on SSD, kept on HDD) |
+| `-DisableMouseAcceleration` | Mouse acceleration off (changes aiming feel) |
+| `-DisableSysMain` | Force-disable SysMain (auto-off on SSD, kept on HDD otherwise) |
 | `-DeepComponentCleanup` | DISM component cleanup with `/ResetBase` (10–30 min) |
-| `-NoPause` | No “press Enter” at the end (unattended use) |
+| `-NoLAN` | Force LAN-discovery services off even on a LAN |
+| `-KeepSMB1` | Keep SMB1 for very old NAS / XP devices |
+| `-NoPause` | No "press Enter" at the end (unattended runs) |
 
 Examples:
 
 ```powershell
-# Gaming PC that also prints
+# Print from this PC
 .\Win11-Gaming-Setup.ps1 -KeepPrintSpooler
+
+# Need file-content search and the search box
+.\Win11-Gaming-Setup.ps1 -KeepWindowsSearch -KeepSearchUI
 
 # Maximum disk reclaim
 .\Win11-Gaming-Setup.ps1 -EmptyRecycleBin -DeepComponentCleanup
-
-# Everything except app removal
-.\Win11-Gaming-Setup.ps1 -SkipDebloat
 ```
 
 ---
 
-## 🧩 Store apps
+## 🔐 Safety model
 
-### ❌ Removed
-
-| App | Why |
+| Guard | What it prevents |
 |---|---|
-| Clipchamp | Video editor, not needed for gaming |
-| Bing News / Bing Weather / Bing Search | Ads + background network calls |
-| Outlook for Windows | Not needed |
-| Teams (new + chat) | Background chat + autostart |
-| Microsoft To Do | Not needed |
-| Office Hub | Office upsell + Copilot host |
-| Feedback Hub, Get Help | Telemetry / support bloat |
-| Alarms & Clock | Not needed |
-| Phone Link | Background sync with phones |
-| Widgets Platform Runtime | Widgets board backend |
-| Dev Home | Developer tooling |
-| Family Safety / Parental Controls | Home-only extras |
-| Quick Assist | Remote support tool |
-| Start Experiences | Tips & suggestions backend |
-| **Camera** | Only when **no camera hardware** is detected |
+| Protected service list | Accidentally stopping core Windows, security, audio, GPU, LAN or Xbox services |
+| Running-dependents check | Disabling a service another running service still needs |
+| Verify-after-change | A refused `sc.exe config` is logged as `NOCHG`, not treated as success |
+| Hardware detection | Disabling WiFi/Bluetooth/camera/scanner services on a PC that has that hardware |
+| LAN detection | Other PCs disappearing from Explorer → Network |
+| Backup merge | Re-runs never overwrite the original service states |
+| Restore point attempt | A Windows-level rollback point before changes |
+| No personal-file touch | Documents, photos and game saves are never deleted |
 
-### ✅ Always kept
-
-| Kept | Reason |
-|---|---|
-| 🖼️ **Photos** | Asked to keep |
-| ✂️ **Snipping Tool** (`ScreenSketch`) | Screenshots |
-| 🃏 **Microsoft Solitaire Collection** | Asked to keep |
-| 🎵 **Media Player** (`ZuneMusic`) | Local media |
-| 📷 **Camera** | If camera hardware exists |
-| 🎨 Paint, 📝 Notepad, ⌨️ Terminal, 🧮 Calculator | Everyday tools |
-| 🏪 Microsoft Store | Needed for app updates |
-| 🎮 Xbox / Gaming App / Game Bar | Gaming features |
-| 🧱 WebView2, VCLibs, App Runtime, codecs (HEVC, VP9, AV1, WebP…) | Dependencies |
+> ⚠️ Security is deliberately preserved: **Defender real-time protection, Firewall, SmartScreen, Windows Update and BITS stay enabled.**
 
 ---
 
-## ⚙️ Services
+## ↩️ Revert — undo everything
 
-The script never touches services it cannot safely judge. Every change is checked
-against a **protected list**, a **running-dependents check**, and after the change
-it verifies the registry start value actually changed.
-
-### 🔒 Never touched (protected)
-
-| Group | Services |
-|---|---|
-| Core Windows | `RpcSs`, `DcomLaunch`, `LSM`, `SamSs`, `Winmgmt`, `EventLog`, `Schedule`, `ProfSvc`, `gpsvc`, `Power`, `PlugPlay`, `StateRepository`, `CoreMessagingRegistrar`, … |
-| LAN / file transfer | `LanmanWorkstation`, `LanmanServer`, `Dnscache`, `Dhcp`, `nsi`, `NlaSvc`, `netprofm`, `lmhosts`, `FDResPub`, `fdPHost` |
-| Security | `WinDefend`, `SecurityHealthService`, `wscsvc`, `SgrmBroker`, `Sense`, `mpssvc`, `CryptSvc`, `BITS`, `wuauserv` |
-| Audio / GPU | `Audiosrv`, `AudioEndpointBuilder`, `NVDisplay.ContainerLocalSystem` |
-| Xbox / gaming | `XblAuthManager`, `XblGameSave`, `XboxGipSvc`, `XboxNetApiSvc`, `GamingServices`, `GamingServicesNet`, `GameInputSvc` |
-| Remote desktop | `TermService`, `UmRdpService`, `SessionEnv` |
-
-### 🚫 Disabled on every PC
-
-| Category | Services |
-|---|---|
-| Telemetry & diagnostics | `DiagTrack`, `dmwappushservice`, `diagnosticshub.standardcollector.service`, `WerSvc`, `DPS`, `PcaSvc`, `wisvc`, `diagsvc`, `WdiServiceHost`, `WdiSystemHost` |
-| Push & cloud sync | `WpnService`, `WpnUserService*`, `CDPSvc`, `CDPUserSvc*`, `OneSyncSvc*`, `PimIndexMaintenanceSvc*`, `BcastDVRUserService*` |
-| Consumer extras | `WpcMonSvc`, `MapsBroker`, `lfsvc`, `AJRouter`, `WMPNetworkSvc`, `RetailDemo`, `icssvc`, `WwanSvc`, `SDRSVC`, `SmsRouter`, `SEMgrSvc`, `WalletService` |
-| Enterprise / dev | `AppVClient`, `EntAppSvc`, `embeddedmode`, `NetTcpPortSharing`, `NetTcpActivator`, `NetPipeActivator`, `NetMsmqActivator`, `DmEnrollmentSvc`, `WorkFoldersSvc` |
-| Remote & legacy | `RemoteRegistry`, `RemoteAccess`, `seclogon`, `WinRM`, `TapiSrv`, `PhoneSvc`, `Fax`, `upnphost`, `SSDPSRV`, `Bonjour Service`, `SCardSvr`, `ScDeviceEnum`, `TieringEngineService` |
-| Indexing & maintenance | `WSearch`, `TrkWks`, `KtmRm`, `SensorService`, `SensrSvc` |
-| Vendors | `NvTelemetryContainer` |
-| Optional | `Spooler` (printing), `SysMain` (SSD only) |
-
-### 🧠 Hardware-adaptive (only when the hardware is missing)
-
-| Hardware | Services disabled |
-|---|---|
-| No WiFi adapter | `WlanSvc`, `RmSvc` |
-| No Bluetooth | `bthserv`, `BTAGService`, `BthAvctpSvc`, `BluetoothUserService*` |
-| No camera | `FrameServer`, `FrameServerMonitor` |
-| No scanner | `stisvc` |
-| No fingerprint / iris | `WbioSrvc` |
-| No touch / pen | `TabletInputService` |
-
-So a laptop with WiFi + Bluetooth + webcam keeps all of those working — nothing is lost.
-
----
-
-## 🌐 Network tuning
-
-| Setting | Value | Effect |
-|---|---|---|
-| Receive-Side Scaling | `enabled` | Multi-core packet processing |
-| Receive Window Auto-Tuning | `normal` | Good throughput on LAN + internet |
-| ECN | `disabled` | Avoids old-router stalls |
-| Timestamps / NetDMA | `disabled` | Lower per-packet overhead |
-| Nagle (`TcpAckFrequency`, `TCPNoDelay`) | `1` / `1` | Lower latency in games |
-| QoS reserved bandwidth | `0` | Nothing held back |
-| NIC power saving / EEE / RSC | off | No random packet drops |
-| SMB1 | `disabled` unless an SMB 1.5 connection is active | Security (SMB2/3 stays on for Linux & Windows shares) |
-| Delivery Optimization | HTTP only | LAN stays free for file transfers |
-| Firewall | Discovery + File Sharing allowed | Linux ↔ Windows transfers work |
-| DNS servers | fastest of Cloudflare / Google / Quad9 / OpenDNS, chosen by TCP/53 latency | Faster lookups, IP address untouched |
-| DNS cache | flushed | Fresh lookups |
-
----
-
-## 🖧 LAN discovery (auto-detected)
-
-Explorer → **Network** and `\\hostname` / `\\IP` browsing need
-`SSDPSRV`, `upnphost`, `FDResPub` and `fdPHost`. Older versions of this
-script disabled SSDP/UPnP, which made other LAN PCs disappear from the
-Network view while direct transfers still worked.
-
-The script now decides from the machine itself:
-
-| Detection | Result |
-|---|---|
-| Active `Private` / `DomainAuthenticated` network profile | LAN → discovery services kept ON and started |
-| Private IPv4 address (`10.*`, `172.16-31.*`, `192.168.*`) | LAN → same |
-| Local SMB shares or mapped network drives | LAN → same |
-| None of the above | SSDP/UPnP slimmed as telemetry-safe overhead |
-| `-NoLAN` | Force the slim behaviour on any machine |
-
-`LanmanWorkstation`, `LanmanServer`, `lmhosts`, `iphlpsvc`, `mpssvc` and
-Function Discovery stay in the protected list in every case, and the
-Network Discovery + File and Printer Sharing firewall groups are enabled.
-
-SMB1 is disabled by default for security, but is **kept automatically** when
-an active SMB 1.5 connection is detected, or with `-KeepSMB1`.
-
----
-
-## 💾 Cleanup details
-
-| Target | Typical gain |
-|---|---|
-| `%TEMP%` + `C:\Windows\Temp` | 1–4 GB |
-| WinRE leftover `C:\$WinREAgent` | 1–2 GB |
-| NVIDIA DX / GL shader cache | 100–500 MB |
-| DirectX / AMD shader caches | 50–300 MB |
-| WER reports + crash dumps | 100 MB–1 GB |
-| Icon + thumbnail cache | 20–200 MB |
-| Windows Update cache (`SoftwareDistribution`, `catroot2`) | 0.5–5 GB |
-| Windows logs older than 7 days | 100–500 MB |
-| Delivery Optimization cache | 100 MB–1 GB |
-| Recycle Bin (with `-EmptyRecycleBin`) | varies |
-
-Fragment caches are rebuilt automatically — first Explorer open may feel slightly slower for a few seconds.
-
----
-
-## ↩️ Revert
-
-The script writes **`Revert.ps1` next to itself** and in `C:\ProgramData\Win11GamingSetup\`.
-
-Double-click **`REVERT-AS-ADMIN.cmd`**, or run:
+Double-click **`REVERT-AS-ADMIN.cmd`**, or:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\Revert.ps1
 ```
 
-It restores:
-
 | Restored | Source |
 |---|---|
 | Service start types | `backup\services-backup.json` |
-| Registry values | `backup\*.reg` (imported) |
+| Registry values | `backup\*.reg` imported |
+| DNS servers | `backup\dns-backup.json` (or DHCP automatic) |
 | Search UI | `SearchHost.exe.disabled` renamed back, owner restored, `SearchHost-Kill` / `SearchHost-Trim` tasks removed |
-| DNS servers | `backup\dns-backup.json` (or DHCP automatic if none were set) |
 
-> A feature update can restore `SearchHost.exe`; the logon task removes any resident copy, so the icon stays hidden and memory stays free.
-
-> Store apps that were uninstalled are **not** restored automatically — reinstall them from the Microsoft Store. Optionally create a restore point before running the script (it does this automatically unless `-SkipRestorePoint`).
+> 📌 Uninstalled Store apps are **not** reinstalled automatically — get them from the Microsoft Store. A reboot after revert is recommended.
 
 ---
 
-## 📁 Files & logs
+## 🪟 Windows 10 / LTSC notes
 
-```
-Win11-Gaming-Setup/
-├── RUN-AS-ADMIN.cmd         # double-click this to run everything
-├── REVERT-AS-ADMIN.cmd      # double-click this to undo
-├── Win11-Gaming-Setup.ps1   # main script (run this)
-├── Revert.ps1               # undo, generated on every run
-├── RUN-COMMANDS.txt         # copy-paste commands + instructions
-└── README.md
-
-C:\ProgramData\Win11GamingSetup\
-├── logs\setup-YYYYMMDD-HHmmss.log
-└── backup\
-    ├── services-backup.json
-    └── *.reg
-```
-
-The backup is **merged**, not overwritten, on re-runs — so running the script twice never destroys the original service state.
-
----
-
-## 🪟 Windows 10 / LTSC
-
-The script detects the running build and skips what does not exist instead of failing.
+Build detection means the script works on Windows 11, Windows 10 and LTSC / IoT LTSC images.
 
 | Area | Windows 11 | Windows 10 / LTSC |
 |---|---|---|
-| Classic right-click menu | applied | skipped (already the default) |
-| Widgets, Copilot, Phone Link | policies written | written, ignored if absent |
+| Classic context menu | applied | skipped (already the default) |
+| Widgets / Copilot / Phone Link | policies written | written, ignored if absent |
 | Store app debloat | 19 apps | usually "No removable Store apps found" — normal on LTSC |
-| Search: web/Bing results | off | off (works on both) |
-| Search UI | `SearchHost.exe` renamed + logon task | host usually absent — skipped |
-| Timeline / Activity history | off | off |
-| News and Interests, Meet Now | not present | off |
-| Defender tuning | full parameter set | unsupported parameters skipped one by one; unused `Sense` agent disabled without MDE onboarding |
+| Search UI | host renamed + logon task | `SearchHost.exe` usually absent — skipped |
+| Search / web results | off | off (works on both) |
+| Timeline, News feed, Meet Now | not present | off |
+| Defender tuning | full parameter set | unsupported parameters skipped individually; unused `Sense` disabled without MDE onboarding |
 | Services | same list | missing services skipped, hardware checks unchanged |
 
 ---
 
-## ✅ Verified on
+## ✅ Verify it worked
 
-| Item | Value |
+```powershell
+# Search should be gone
+Get-Process SearchHost,msedgewebview2 -ErrorAction SilentlyContinue
+Test-Path 'C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe.disabled'
+
+# DNS and IP (IP must be unchanged)
+Get-DnsClientServerAddress -AddressFamily IPv4 | Select InterfaceAlias,ServerAddresses
+Get-NetIPConfiguration | Select InterfaceAlias,IPv4Address
+
+# Services and protection
+Get-Service DiagTrack,WSearch,Spooler,SysMain,SSDPSRV,upnphost,FDResPub,fdPHost,WinDefend -ErrorAction SilentlyContinue |
+  Select Name,Status,StartType
+Get-MpComputerStatus | Select RealTimeProtectionEnabled,AntivirusEnabled
+
+# The newest log
+Get-Content (Get-ChildItem "$env:ProgramData\Win11GamingSetup\logs\setup-*.log" |
+  Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+```
+
+Full copy-paste instructions are in **[`RUN-COMMANDS.txt`](RUN-COMMANDS.txt)**.
+
+---
+
+## 🛠️ Troubleshooting
+
+| Symptom | Fix |
 |---|---|
-| OS | Windows 11 build 26300 (Windows 10 / LTSC supported by build checks) |
-| CPU | Intel Core i5-2500K (unsupported hardware) |
-| RAM | 12 GB DDR3-1333 |
-| GPU | NVIDIA GTX 750 Ti 2 GB |
-| Result | +19.9 GB free, 52 service settings, 19 apps removed, UI noticeably snappier |
+| "Running scripts is disabled on this system" | Use the `.cmd` launcher, or the full command with `-ExecutionPolicy Bypass` |
+| UAC prompt does not appear | Click the taskbar — the consent window is often behind other windows |
+| "Access is denied" / nothing changes | Close the window, open PowerShell as Administrator, run again |
+| Restore point step fails | System Restore is off on that PC — add `-SkipRestorePoint` |
+| Other PCs not visible in Explorer → Network | Ensure the network profile is `Private`, LAN is connected at run time, and re-run without `-NoLAN` |
+| Search still appears | A feature update restored the host — re-run the script (the logon task also removes it), or check that you did not pass `-KeepSearchUI` |
+| Some registry lines show "unauthorized operation" | Windows protects a few policy keys even from an elevated user; those tweaks are cosmetic and harmless |
+| File-content search no longer works | Expected: `WSearch` is off. Re-enable with `-KeepWindowsSearch` or `Revert.ps1` |
+| Printing stopped | Expected: `Spooler` is off. Add `-KeepPrintSpooler` and re-run |
 
 ---
 
-## 🧯 Safety notes
+## ⚠️ Honest limitations (read this before believing the hype)
 
-- Run it on a **gaming-only** PC. On a work PC you may want `-KeepPrintSpooler -KeepWindowsSearch -SkipDebloat`.
-- Disabling `WSearch` makes content indexing stop; the **Start menu itself still opens** (app launching is unaffected).
-- The search UI is disabled by default: its icon is hidden, `SearchHost.exe` is renamed to `.disabled`, and a logon task removes any resident copy. Pressing Win still opens Start, but typing a search query returns nothing. Use `-KeepSearchUI` if you need it.
-- `Revert.ps1` restores the executable, its owner, the taskbar icon and the removed tasks.
-- Disabling `Spooler` stops all printing until you re-enable it.
-- `-DeepComponentCleanup` uses `/ResetBase`, which prevents uninstalling installed updates afterwards.
-- Old, unsupported hardware (like the test machine) is still limited by the hardware itself — this script removes software overhead, not physics.
-- Always keep a backup of important data. This script does not touch personal files.
+- **No FPS is guaranteed.** The script removes overhead; it cannot make an i5-2500K into a modern CPU.
+- **Search is completely disabled by default.** The Start menu still works, but typing a search query returns nothing. `-KeepSearchUI` opts out.
+- **Renaming a system executable is a deliberate, invasive tweak.** Windows feature updates can restore it; the logon task handles that, but the method is a trade-off, not an official Microsoft setting.
+- **Defender's ~200 MB is mostly baseline AV memory.** The script lowers CPU cost and removes the unused Endpoint agent; it does not (and should not) turn real-time protection off.
+- **Disabling `WSearch` makes file-content search slower**, and disabling `Spooler` stops all printing until re-enabled.
+- **`-DeepComponentCleanup` uses `/ResetBase`** — installed Windows updates can no longer be uninstalled afterwards.
+- **Public DNS is not always best for local names.** The original DNS is kept as fallback; use `-DnsKeepLocalFirst` if your LAN relies on it.
+- **Re-runs are safe but not magical**: cleanup and WU cache reset run again, so the second run usually frees much less space.
+- **Store apps removed are not auto-reinstalled** on revert.
+- **Always keep a backup of important data.** The script does not touch personal files, but no system tweak is risk-free.
 
 ---
 
-## 📜 License
+## 📁 Files, logs and backups
 
-MIT — use it, fork it, improve it. No warranty; read the script before running it on production machines.
+```
+Win11-Gaming-Setup/
+├── RUN-AS-ADMIN.cmd         # double-click to run everything
+├── REVERT-AS-ADMIN.cmd      # double-click to undo
+├── Win11-Gaming-Setup.ps1   # main script
+├── Revert.ps1               # undo script (regenerated on every run)
+├── RUN-COMMANDS.txt         # copy-paste commands and instructions
+└── README.md
+
+C:\ProgramData\Win11GamingSetup\
+├── logs\setup-YYYYMMDD-HHmmss.log
+├── logs\disk-check.txt
+├── backup\
+│   ├── services-backup.json
+│   ├── dns-backup.json
+│   ├── searchui-disabled.json
+│   └── *.reg
+├── Revert.ps1
+├── kill-searchhost.ps1
+└── trim-searchhost.ps1
+```
 
 ---
 
 ## 📤 Publishing to GitHub
 
-The folder is git-ready: it already contains a local commit on `main`, plus `.gitignore`, `.gitattributes` and `LICENSE`. From the Linux machine:
+The folder already contains a local Git repository on `main` (with `.gitignore`, `.gitattributes` and MIT `LICENSE`). From a machine with Git:
 
 ```bash
 cd Win11-Gaming-Setup
-
-# The commit is already there - only add a remote and push:
-git remote add origin git@github.com:<your-user>/win11-gaming-setup.git
+git remote add origin git@github.com:mayanktaker/win11-gaming-setup.git
 git push -u origin main
 ```
 
-If you copied only the files (no `.git` folder), create the repository history first:
+If you copied only the files (no `.git` folder), create the history first:
 
 ```bash
 git init -b main
 git add .
-git commit -m "Windows gaming setup: tweaks, cleanup, debloat, services, revert (Win10/11 + LTSC)"
-git remote add origin git@github.com:<your-user>/win11-gaming-setup.git
+git commit -m "Windows gaming setup: tweaks, cleanup, debloat, services, revert"
+git remote add origin git@github.com:mayanktaker/win11-gaming-setup.git
 git push -u origin main
 ```
 
@@ -366,7 +443,12 @@ Suggested repository settings:
 | Setting | Value |
 |---|---|
 | Name | `win11-gaming-setup` |
-| Description | *One PowerShell script to turn Windows 10 or 11 into a lean, fast, gaming-only PC: tweaks, cleanup, debloat, service slimming and network tuning, with a one-click revert.* |
+| Description | *One script to turn Windows 10 / 11 (LTSC included) into a lean gaming-only PC: tweaks, cleanup, debloat, service slimming, LAN-aware detection, fastest DNS and one-click revert.* |
 | Topics | `windows-11`, `windows-10`, `ltsc`, `gaming`, `debloat`, `powershell`, `performance`, `tweaks`, `cleanup` |
 | License | MIT |
 
+---
+
+## 📜 License
+
+MIT — use it, fork it, improve it. No warranty. Read the script before running it on a production machine.

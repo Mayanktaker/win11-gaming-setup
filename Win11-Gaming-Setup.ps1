@@ -107,7 +107,7 @@
     Revert : .\Revert.ps1 (next to this script) or C:\ProgramData\Win11GamingSetup\Revert.ps1
     Logs   : C:\ProgramData\Win11GamingSetup\logs
     Backup : C:\ProgramData\Win11GamingSetup\backup
-    Version: 1.5.0
+    Version: 1.6.0
 #>
 
 [CmdletBinding()]
@@ -137,7 +137,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
-$ScriptVersion = '1.5.0'
+$ScriptVersion = '1.6.0'
 
 # ---------------------------------------------------------------- self-elevate
 if (-not $ElevatedChild) {
@@ -173,14 +173,31 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $ScriptDir -or -not (Test-Path $ScriptDir)) { $ScriptDir = $Root }
 
 $script:LogFile = Join-Path $LogDir ('setup-{0}.log' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$script:LogTxtRoot = Join-Path $Root 'logs.txt'
+$script:LogTxtLocal = Join-Path $ScriptDir 'logs.txt'
 $svcOriginal = @{}
 $script:Changed = 0
 $script:Stopwatch = [Diagnostics.Stopwatch]::StartNew()
 
+# Initialize logs.txt with run banner
+$initBanner = "================================================================================`r`n" +
+              ("  Win11 Gaming Setup v{0} - Started {1} on {2}`r`n" -f $ScriptVersion, (Get-Date), $env:COMPUTERNAME) +
+              "  Created by Mayanktaker Computers & Web Development | https://mayanktaker.com`r`n" +
+              "================================================================================`r`n`r`n"
+try { Set-Content -Path $script:LogTxtRoot -Value $initBanner -Encoding UTF8 -ErrorAction SilentlyContinue } catch { }
+if ($ScriptDir -ne $Root -and (Test-Path $ScriptDir)) {
+    try { Set-Content -Path $script:LogTxtLocal -Value $initBanner -Encoding UTF8 -ErrorAction SilentlyContinue } catch { }
+}
+
 function Log {
     param([string]$Message, [string]$Color = 'Gray')
     Write-Host $Message -ForegroundColor $Color
-    Add-Content -Path $script:LogFile -Value ('[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss'), $Message) -ErrorAction SilentlyContinue
+    $line = ('[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss'), $Message)
+    Add-Content -Path $script:LogFile -Value $line -ErrorAction SilentlyContinue
+    Add-Content -Path $script:LogTxtRoot -Value $line -ErrorAction SilentlyContinue
+    if ($ScriptDir -ne $Root -and (Test-Path $ScriptDir)) {
+        Add-Content -Path $script:LogTxtLocal -Value $line -ErrorAction SilentlyContinue
+    }
 }
 
 function Section {
@@ -213,7 +230,9 @@ function Get-SvcStartValue {
 }
 
 Log ('Gaming Setup v{0}  |  {1}  |  {2}' -f $ScriptVersion, (Get-Date), $env:COMPUTERNAME) 'White'
+Log 'Created by Mayanktaker Computers & Web Development' 'Cyan'
 Log ('Log: {0}' -f $script:LogFile) 'DarkGray'
+Log ('Logs.txt: {0}' -f $script:LogTxtLocal) 'DarkGray'
 if ($DryRun) { Log '  *** DRY-RUN MODE: no changes will be made ***' 'Yellow' }
 
 $os = Get-CimInstance Win32_OperatingSystem
@@ -1391,13 +1410,21 @@ $root = 'C:\ProgramData\Win11GamingSetup'
 $logDir = Join-Path $root 'logs'
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $revertLog = Join-Path $logDir ('revert-{0}.log' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$revertTxtRoot = Join-Path $root 'logs.txt'
+$revertTxtLocal = if ($PSScriptRoot) { Join-Path $PSScriptRoot 'logs.txt' } else { $null }
 
 function RLog([string]$msg, [string]$color = 'Gray') {
     Write-Host $msg -ForegroundColor $color
-    Add-Content -Path $revertLog -Value ('[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss'), $msg) -ErrorAction SilentlyContinue
+    $line = ('[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss'), $msg)
+    Add-Content -Path $revertLog -Value $line -ErrorAction SilentlyContinue
+    Add-Content -Path $revertTxtRoot -Value $line -ErrorAction SilentlyContinue
+    if ($revertTxtLocal -and $PSScriptRoot -ne $root -and (Test-Path $PSScriptRoot)) {
+        Add-Content -Path $revertTxtLocal -Value $line -ErrorAction SilentlyContinue
+    }
 }
 
 RLog ('=== Reverting Windows Gaming Setup ({0}) ===' -f (Get-Date)) 'Cyan'
+RLog 'Created by Mayanktaker Computers & Web Development' 'Cyan'
 
 # 1. Services
 $json = Join-Path $root 'backup\services-backup.json'
@@ -1502,6 +1529,11 @@ RLog ''
 RLog 'Revert complete. Reboot recommended.' 'Cyan'
 RLog 'Note: uninstalled Store apps have to be installed again from the Store.' 'Yellow'
 RLog ('Revert log: {0}' -f $revertLog) 'DarkGray'
+RLog ''
+RLog '================================================================================' 'Cyan'
+RLog '  Created with ❤️ by Mayanktaker Computers & Web Development' 'Cyan'
+RLog '  Website: https://mayanktaker.com' 'Green'
+RLog '================================================================================' 'Cyan'
 '@
 $revertTargets = @(
     (Join-Path $Root 'Revert.ps1'),
@@ -1521,9 +1553,20 @@ Log ('  Services changed        : {0}' -f $script:Changed) 'White'
 Log ('  Scheduled tasks off     : {0}' -f $taskOff) 'White'
 Log ('  Store apps removed      : {0}' -f $appsRemoved) 'White'
 Log ('  Time elapsed            : {0}' -f $elapsedStr) 'White'
-Log ('  Log                     : {0}' -f $script:LogFile) 'DarkGray'
+Log ('  Log file                : {0}' -f $script:LogFile) 'DarkGray'
+Log ('  Quick log (logs.txt)    : {0}' -f $script:LogTxtLocal) 'DarkGray'
 Log ('  Revert                  : {0}' -f (Join-Path $ScriptDir 'Revert.ps1')) 'DarkGray'
 Log ''
 Log '  Please reboot so every change takes full effect.' 'Yellow'
+Log ''
+Log '================================================================================' 'Cyan'
+Log '  Created with ❤️ by Mayanktaker Computers & Web Development' 'Cyan'
+Log '  Website: https://mayanktaker.com' 'Green'
+Log ''
+Log '  ☕ Did this setup save your FPS or rescue your PC from Windows bloat?' 'Yellow'
+Log '     Fuel Mayank with a coffee: https://buymeacoffee.com/mayanktaker' 'Yellow'
+Log '     (Because caffeine converts directly into higher frame rates and zero micro-stutters!)' 'DarkGray'
+Log '================================================================================' 'Cyan'
+Log ''
 
 if (-not $NoPause) { Read-Host 'Press Enter to close' }

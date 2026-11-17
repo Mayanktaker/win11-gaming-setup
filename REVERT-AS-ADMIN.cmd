@@ -15,6 +15,12 @@ if errorlevel 1 (
 )
 
 echo.
+echo   ======================================================================
+echo     Windows Gaming Setup - Revert
+echo     Created by Mayanktaker Computers ^& Web Development
+echo     https://mayanktaker.com
+echo   ======================================================================
+echo.
 echo   Reverting Windows Gaming Setup changes...
 echo.
 
@@ -22,5 +28,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Revert.ps1"
 
 echo.
 echo   Revert finished. Reboot recommended.
+echo   Website: https://mayanktaker.com
 echo.
 pause

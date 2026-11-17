@@ -15,6 +15,12 @@ if errorlevel 1 (
 )
 
 echo.
+echo   ======================================================================
+echo     Windows Gaming Setup
+echo     Created by Mayanktaker Computers ^& Web Development
+echo     https://mayanktaker.com
+echo   ======================================================================
+echo.
 echo   Windows Gaming Setup is starting...
 echo   A coloured log will be printed below.
 echo.
@@ -22,7 +28,11 @@ echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Win11-Gaming-Setup.ps1" -ElevatedChild -NoPause
 
 echo.
-echo   Finished. Check the log in:
+echo   Finished. Check the logs in:
 echo   C:\ProgramData\Win11GamingSetup\logs
+echo   logs.txt (in this folder and in C:\ProgramData\Win11GamingSetup)
+echo.
+echo   Website: https://mayanktaker.com
+echo   ☕ Fuel Mayank with coffee: https://buymeacoffee.com/mayanktaker
 echo.
 pause

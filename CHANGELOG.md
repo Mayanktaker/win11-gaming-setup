@@ -2,6 +2,18 @@
 
 # Changelog
 
+## [1.6.0]
+
+### What's new
+- Added instant access `logs.txt` log saving: each run automatically writes the complete log to `logs.txt` right in your setup folder and in `C:\ProgramData\Win11GamingSetup\logs.txt` for effortless viewing.
+- Added start and finish banners acknowledging Mayanktaker Computers & Web Development with website link (https://mayanktaker.com).
+- Added a friendly coffee appreciation message at the conclusion of runs.
+
+### Bug fixes
+- Ensured log creation gracefully handles read-only or restricted execution folders without interruptions.
+
+---
+
 ## [1.5.0]
 
 ### What's new

@@ -1,3 +1,5 @@
+<!-- © Mayanktaker Computers & Web Development | https://mayanktaker.com -->
+
 # 🎮 Windows Gaming Setup
 
 > Turn a fresh Windows 10 / 11 (Home, Pro, Enterprise, LTSC through 26H2+) install into a lean, fast, **gaming-only** PC — with one administrator script and a one-click undo.
@@ -6,7 +8,7 @@
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?style=flat-square&logo=powershell)
 ![Admin](https://img.shields.io/badge/requires-Administrator-red?style=flat-square)
 ![Revert](https://img.shields.io/badge/revert-included-success?style=flat-square)
-![Version](https://img.shields.io/badge/version-1.5.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.6.0-blue?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
 ---
@@ -409,19 +411,25 @@ Win11-Gaming-Setup/
 ├── Win11-Gaming-Setup.ps1   # main script
 ├── Revert.ps1               # undo script (regenerated on every run)
 ├── RUN-COMMANDS.txt         # copy-paste commands and instructions
+├── logs.txt                 # instant mirror log of the latest run
+├── CHANGELOG.md             # user-facing version history
+├── AGENTS.md                # AI agent operating map
 └── README.md
 
 C:\ProgramData\Win11GamingSetup\
+├── logs.txt                 # mirror log of latest run
 ├── logs\setup-YYYYMMDD-HHmmss.log
-├── logs\disk-check.txt
+├── logs\revert-YYYYMMDD-HHmmss.log
 ├── backup\
 │   ├── services-backup.json
+│   ├── tasks-backup.json
+│   ├── power-scheme.txt
+│   ├── smb1.reg
 │   ├── dns-backup.json
 │   ├── searchui-disabled.json
 │   └── *.reg
 ├── Revert.ps1
-├── kill-searchhost.ps1
-└── trim-searchhost.ps1
+└── kill-searchhost.ps1
 ```
 
 ---

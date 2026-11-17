@@ -7,13 +7,21 @@ $root = 'C:\ProgramData\Win11GamingSetup'
 $logDir = Join-Path $root 'logs'
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 $revertLog = Join-Path $logDir ('revert-{0}.log' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$revertTxtRoot = Join-Path $root 'logs.txt'
+$revertTxtLocal = if ($PSScriptRoot) { Join-Path $PSScriptRoot 'logs.txt' } else { $null }
 
 function RLog([string]$msg, [string]$color = 'Gray') {
     Write-Host $msg -ForegroundColor $color
-    Add-Content -Path $revertLog -Value ('[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss'), $msg) -ErrorAction SilentlyContinue
+    $line = ('[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss'), $msg)
+    Add-Content -Path $revertLog -Value $line -ErrorAction SilentlyContinue
+    Add-Content -Path $revertTxtRoot -Value $line -ErrorAction SilentlyContinue
+    if ($revertTxtLocal -and $PSScriptRoot -ne $root -and (Test-Path $PSScriptRoot)) {
+        Add-Content -Path $revertTxtLocal -Value $line -ErrorAction SilentlyContinue
+    }
 }
 
 RLog ('=== Reverting Windows Gaming Setup ({0}) ===' -f (Get-Date)) 'Cyan'
+RLog 'Created by Mayanktaker Computers & Web Development' 'Cyan'
 
 # 1. Services
 $json = Join-Path $root 'backup\services-backup.json'
@@ -118,3 +126,8 @@ RLog ''
 RLog 'Revert complete. Reboot recommended.' 'Cyan'
 RLog 'Note: uninstalled Store apps have to be installed again from the Store.' 'Yellow'
 RLog ('Revert log: {0}' -f $revertLog) 'DarkGray'
+RLog ''
+RLog '================================================================================' 'Cyan'
+RLog '  Created with ❤️ by Mayanktaker Computers & Web Development' 'Cyan'
+RLog '  Website: https://mayanktaker.com' 'Green'
+RLog '================================================================================' 'Cyan'

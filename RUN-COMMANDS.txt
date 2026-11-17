@@ -1,5 +1,6 @@
 ================================================================================
  WINDOWS GAMING SETUP - READY-TO-RUN COMMANDS
+ © Mayanktaker Computers & Web Development | https://mayanktaker.com
  Target: Windows 10 (Home, Pro, LTSC 22H2) and Windows 11 (21H2 - 26H2+)
 ================================================================================
 
@@ -85,8 +86,9 @@ this step PowerShell may refuse to run the script.
 
   Open the newest log (service changes, tasks, apps, timings):
 
-      Get-Content (Get-ChildItem "$env:ProgramData\Win11GamingSetup\logs\setup-*.log" |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+      Get-Content .\logs.txt
+      # or from ProgramData:
+      Get-Content "$env:ProgramData\Win11GamingSetup\logs.txt"
 
   Check a few services:
 

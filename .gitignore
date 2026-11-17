@@ -1,6 +1,8 @@
 # Windows / PowerShell
 *.log
 *.tmp
+logs.txt
+*.zip
 Thumbs.db
 desktop.ini
 

@@ -20,6 +20,23 @@ Get-ChildItem (Join-Path $root 'backup') -Filter '*.reg' -ErrorAction SilentlyCo
     Write-Host ("  imported {0}" -f $_.Name) -ForegroundColor Green
 }
 
+# DNS: restore the original resolver list (DHCP automatic if it was empty)
+$dnsBak = Join-Path $root 'backup\dns-backup.json'
+if (Test-Path $dnsBak) {
+    try {
+        foreach ($r in @(Get-Content $dnsBak -Raw | ConvertFrom-Json)) {
+            if (@($r.Servers).Count -gt 0) {
+                Set-DnsClientServerAddress -InterfaceIndex $r.InterfaceIndex -ServerAddresses @($r.Servers) -ErrorAction Stop
+            } else {
+                Reset-DnsClientServerAddress -InterfaceIndex $r.InterfaceIndex -ErrorAction SilentlyContinue
+            }
+            Write-Host ("  restored DNS on {0}" -f $r.Name) -ForegroundColor Green
+        }
+    } catch {
+        Write-Host ("  DNS restore failed: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
+    }
+}
+
 # Undo the search UI disable: tasks, renamed executable, owner
 & schtasks.exe /Delete /TN 'SearchHost-Kill' /F 2>&1 | Out-Null
 & schtasks.exe /Delete /TN 'SearchHost-Trim' /F 2>&1 | Out-Null

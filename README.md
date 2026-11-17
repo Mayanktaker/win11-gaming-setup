@@ -6,7 +6,7 @@
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?style=flat-square&logo=powershell)
 ![Admin](https://img.shields.io/badge/requires-Administrator-red?style=flat-square)
 ![Revert](https://img.shields.io/badge/revert-included-success?style=flat-square)
-![Version](https://img.shields.io/badge/version-1.2.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.3.0-blue?style=flat-square)
 
 ---
 
@@ -34,6 +34,10 @@
 
 ## 🚀 Quick start
 
+> **Easiest:** just **double-click `RUN-AS-ADMIN.cmd`** (or right-click → *Run as
+> administrator*). It asks for UAC rights at the very start, runs the whole script
+> and keeps the window open when it finishes.
+>
 > Copy-paste ready commands with step-by-step instructions are in
 > **[`RUN-COMMANDS.txt`](RUN-COMMANDS.txt)** — open that file on the target PC.
 
@@ -65,6 +69,8 @@ The script re-launches itself elevated, prints a coloured live log, and ends wit
 | `-NoLAN` | Force LAN-discovery services off even if a LAN is detected (offline gaming PC) |
 | `-KeepSMB1` | Keep SMB1 (only for very old NAS / Windows XP devices) |
 | `-KeepSearchUI` | Keep the Start-menu search UI (default: fully disabled) |
+| `-SkipDns` | Do not change DNS servers (the IP address is never changed anyway) |
+| `-DnsKeepLocalFirst` | Keep the router/AD DNS as first resolver, append fastest public ones |
 | `-KeepDefenderDailyScan` | Keep a daily Defender scan at 03:00 |
 | `-SkipDebloat` | Do not remove any Store app |
 | `-SkipCleanup` | Skip disk cleanup and the Windows Update cache reset |
@@ -187,6 +193,7 @@ So a laptop with WiFi + Bluetooth + webcam keeps all of those working — nothin
 | SMB1 | `disabled` unless an SMB 1.5 connection is active | Security (SMB2/3 stays on for Linux & Windows shares) |
 | Delivery Optimization | HTTP only | LAN stays free for file transfers |
 | Firewall | Discovery + File Sharing allowed | Linux ↔ Windows transfers work |
+| DNS servers | fastest of Cloudflare / Google / Quad9 / OpenDNS, chosen by TCP/53 latency | Faster lookups, IP address untouched |
 | DNS cache | flushed | Fresh lookups |
 
 ---
@@ -240,6 +247,8 @@ Fragment caches are rebuilt automatically — first Explorer open may feel sligh
 
 The script writes **`Revert.ps1` next to itself** and in `C:\ProgramData\Win11GamingSetup\`.
 
+Double-click **`REVERT-AS-ADMIN.cmd`**, or run:
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\Revert.ps1
 ```
@@ -251,6 +260,7 @@ It restores:
 | Service start types | `backup\services-backup.json` |
 | Registry values | `backup\*.reg` (imported) |
 | Search UI | `SearchHost.exe.disabled` renamed back, owner restored, `SearchHost-Kill` / `SearchHost-Trim` tasks removed |
+| DNS servers | `backup\dns-backup.json` (or DHCP automatic if none were set) |
 
 > A feature update can restore `SearchHost.exe`; the logon task removes any resident copy, so the icon stays hidden and memory stays free.
 
@@ -262,6 +272,8 @@ It restores:
 
 ```
 Win11-Gaming-Setup/
+├── RUN-AS-ADMIN.cmd         # double-click this to run everything
+├── REVERT-AS-ADMIN.cmd      # double-click this to undo
 ├── Win11-Gaming-Setup.ps1   # main script (run this)
 ├── Revert.ps1               # undo, generated on every run
 ├── RUN-COMMANDS.txt         # copy-paste commands + instructions

@@ -21,7 +21,8 @@
       6.  Service slimming for a gaming-only PC, with LAN-aware detection:
           SSDP / UPnP / Function Discovery stay ON when the machine is on a LAN,
           so other Windows/Linux PCs remain visible in Explorer > Network
-      7.  Internet / network tuning (RSS, Nagle off, QoS, NIC power saving)
+      7.  Internet / network tuning (RSS, Nagle off, QoS, NIC power saving,
+          fastest DNS auto-detected and added - the IP address is never changed)
       8.  Icon + thumbnail cache rebuild
       9.  Automatic backup + Revert.ps1 generator
 
@@ -71,6 +72,13 @@
     By default it is fully disabled: icon hidden, host renamed and a logon
     cleanup task installed. Start menu and app launching still work.
 
+.PARAMETER DnsKeepLocalFirst
+    Keep the current router/AD DNS as the first resolver and append the fastest
+    public ones. Default: fastest public DNS first, existing DNS kept as fallback.
+
+.PARAMETER SkipDns
+    Do not touch DNS servers at all (IP address is never changed either way).
+
 .PARAMETER NoPause
     Do not wait for a key press at the end (used for unattended runs).
 
@@ -102,13 +110,15 @@ param(
     [switch]$NoLAN,
     [switch]$KeepSMB1,
     [switch]$KeepSearchUI,
+    [switch]$SkipDns,
+    [switch]$DnsKeepLocalFirst,
     [switch]$NoPause,
     [switch]$ElevatedChild
 )
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
-$ScriptVersion = '1.2.0'
+$ScriptVersion = '1.3.0'
 
 # ---------------------------------------------------------------- self-elevate
 if (-not $ElevatedChild) {
@@ -116,7 +126,7 @@ if (-not $ElevatedChild) {
     $isAdmin = (New-Object Security.Principal.WindowsPrincipal($wid)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $isAdmin) {
         $fwd = @()
-        foreach ($n in 'SkipCleanup','SkipRestorePoint','KeepPrintSpooler','KeepWindowsSearch','DisableSysMain','DisableMouseAcceleration','EmptyRecycleBin','DeepComponentCleanup','SkipDebloat','KeepDefenderDailyScan','NoLAN','KeepSMB1','KeepSearchUI','NoPause') {
+        foreach ($n in 'SkipCleanup','SkipRestorePoint','KeepPrintSpooler','KeepWindowsSearch','DisableSysMain','DisableMouseAcceleration','EmptyRecycleBin','DeepComponentCleanup','SkipDebloat','KeepDefenderDailyScan','NoLAN','KeepSMB1','KeepSearchUI','SkipDns','DnsKeepLocalFirst','NoPause') {
             if ((Get-Variable -Name $n -ValueOnly)) { $fwd += "-$n" }
         }
         Write-Host ''
@@ -1014,6 +1024,68 @@ Net 'netsh int tcp set global dca=enabled'
 Net 'netsh winhttp reset proxy'
 Net 'ipconfig /flushdns'
 
+# --- Fastest DNS resolver (IP address is NEVER changed) -------------------
+# Probe well-known resolvers on TCP/53 and use the two fastest. The currently
+# configured DNS is kept as a fallback so local/LAN names still resolve.
+if ($SkipDns) {
+    Log '  DNS change skipped (-SkipDns)' 'DarkGray'
+} else {
+    function Test-DnsTcp {
+        param([string]$Address, [int]$TimeoutMs = 600)
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $client = $null
+        try {
+            $client = New-Object System.Net.Sockets.TcpClient
+            $ar = $client.BeginConnect($Address, 53, $null, $null)
+            if (-not $ar.AsyncWaitHandle.WaitOne($TimeoutMs, $false)) { return 9999 }
+            $client.EndConnect($ar)
+            $sw.Stop()
+            return [int]$sw.Elapsed.TotalMilliseconds
+        } catch { return 9999 }
+        finally { if ($client) { $client.Close() } }
+    }
+
+    $dnsPool = @('1.1.1.1','1.0.0.1','8.8.8.8','8.8.4.4','9.9.9.9','208.67.222.222')
+    $dnsRanks = @()
+    foreach ($ip in $dnsPool) {
+        $rank = [PSCustomObject]@{ IP = $ip; Ms = (Test-DnsTcp -Address $ip) }
+        $dnsRanks += $rank
+    }
+    $best = @($dnsRanks | Where-Object { $_.Ms -lt 9999 } | Sort-Object Ms | Select-Object -First 2 -ExpandProperty IP)
+
+    if ($best.Count -eq 0) {
+        Log '  No public DNS reachable right now - DNS left unchanged' 'DarkYellow'
+    } else {
+        $nets = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
+            Where-Object { $_.Status -eq 'Up' } |
+            Where-Object { (Get-NetIPConfiguration -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue).IPv4DefaultGateway })
+        $dnsBackup = @()
+        foreach ($nic in $nets) {
+            try {
+                $old = @(Get-DnsClientServerAddress -InterfaceIndex $nic.InterfaceIndex -AddressFamily IPv4 -ErrorAction Stop |
+                    Select-Object -ExpandProperty ServerAddresses |
+                    Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' -and $_ -ne '0.0.0.0' })
+                $dnsBackup += [PSCustomObject]@{ InterfaceIndex = $nic.InterfaceIndex; Name = $nic.Name; Servers = $old }
+                $local = @($old | Where-Object { $_ -match '^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.)' })
+                $final = @()
+                if ($DnsKeepLocalFirst -and $local.Count -gt 0) { $final += $local[0] }
+                $final += $best
+                if (-not $DnsKeepLocalFirst) { $final += $local }
+                $final = @($final | Select-Object -Unique)
+                Set-DnsClientServerAddress -InterfaceIndex $nic.InterfaceIndex -ServerAddresses $final -ErrorAction Stop
+                Log ('  DNS on {0}: {1}  (IPv4 address untouched, local DNS kept as fallback)' -f $nic.Name, ($final -join ', ')) 'Green'
+            } catch {
+                Log ('  DNS tweak skipped for {0}: {1}' -f $nic.Name, $_.Exception.Message) 'DarkYellow'
+            }
+        }
+        if ($dnsBackup.Count -gt 0) {
+            $dnsBackup | ConvertTo-Json -Depth 3 | Set-Content -Path (Join-Path $BakDir 'dns-backup.json') -Encoding UTF8
+        }
+        Log ('  Fastest resolvers: {0}' -f (($dnsRanks | Sort-Object Ms | Select-Object -First 3 | ForEach-Object { '{0}={1}ms' -f $_.IP, $_.Ms }) -join ', ')) 'DarkGray'
+        Net 'ipconfig /flushdns'
+    }
+}
+
 # QoS: reserved bandwidth 0 -> nothing held back from games or LAN transfers
 Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Psched' 'NonBestEffortLimit' 0
 
@@ -1137,6 +1209,23 @@ if (Test-Path $json) {
 Get-ChildItem (Join-Path $root 'backup') -Filter '*.reg' -ErrorAction SilentlyContinue | ForEach-Object {
     & reg.exe import $_.FullName 2>&1 | Out-Null
     Write-Host ("  imported {0}" -f $_.Name) -ForegroundColor Green
+}
+
+# DNS: restore the original resolver list (DHCP automatic if it was empty)
+$dnsBak = Join-Path $root 'backup\dns-backup.json'
+if (Test-Path $dnsBak) {
+    try {
+        foreach ($r in @(Get-Content $dnsBak -Raw | ConvertFrom-Json)) {
+            if (@($r.Servers).Count -gt 0) {
+                Set-DnsClientServerAddress -InterfaceIndex $r.InterfaceIndex -ServerAddresses @($r.Servers) -ErrorAction Stop
+            } else {
+                Reset-DnsClientServerAddress -InterfaceIndex $r.InterfaceIndex -ErrorAction SilentlyContinue
+            }
+            Write-Host ("  restored DNS on {0}" -f $r.Name) -ForegroundColor Green
+        }
+    } catch {
+        Write-Host ("  DNS restore failed: {0}" -f $_.Exception.Message) -ForegroundColor Yellow
+    }
 }
 
 # Undo the search UI disable: task, renamed executable, owner

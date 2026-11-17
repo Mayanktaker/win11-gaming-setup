@@ -3,6 +3,14 @@
  Target: Windows 10 (incl. LTSC 2019 / 2021 / IoT) and Windows 11
 ================================================================================
 
+FASTEST WAY - NO TYPING AT ALL:
+  Double-click  RUN-AS-ADMIN.cmd
+  (or right-click it and choose "Run as administrator").
+  It asks for UAC rights at the very start, runs the whole setup and leaves
+  the window open with the summary.  Click YES on the UAC prompt.
+
+  To undo later: double-click  REVERT-AS-ADMIN.cmd
+
 Everything below is copy-paste ready. Run the commands in the SAME folder that
 contains Win11-Gaming-Setup.ps1, with an administrator account.
 
@@ -137,6 +145,8 @@ this step PowerShell may refuse to run the script.
   -NoLAN                    force LAN discovery services off (offline gaming PC)
   -KeepSMB1                 keep SMB1 (very old NAS / Windows XP devices)
   -KeepSearchUI             keep the Start-menu search UI (default: fully disabled)
+  -SkipDns                  do not change DNS servers
+  -DnsKeepLocalFirst        keep the router/AD DNS first, append fastest public DNS
   -SkipDebloat              do not remove Store apps
   -SkipCleanup              skip disk cleanup + Windows Update cache reset
   -SkipRestorePoint         do not create a System Restore point
@@ -145,6 +155,24 @@ this step PowerShell may refuse to run the script.
   -DisableSysMain           force-disable SysMain (auto-off on SSD, kept on HDD)
   -DeepComponentCleanup     DISM /StartComponentCleanup /ResetBase
   -NoPause                  no "press Enter" at the end
+
+--------------------------------------------------------------------------------
+ DNS (the IP address is never changed)
+--------------------------------------------------------------------------------
+
+  The script probes Cloudflare (1.1.1.1 / 1.0.0.1), Google (8.8.8.8 / 8.8.4.4),
+  Quad9 (9.9.9.9) and OpenDNS (208.67.222.222) on TCP port 53, then puts the
+  two fastest on every active physical adapter. The old router/AD DNS is kept
+  as a fallback so local and LAN names still resolve. Original values are
+  saved in  C:\ProgramData\Win11GamingSetup\backup\dns-backup.json .
+
+  Check the result:
+
+      Get-DnsClientServerAddress -AddressFamily IPv4 |
+        Select-Object InterfaceAlias,ServerAddresses | Format-Table -AutoSize
+
+  If a corporate/router DNS must stay first, run with -DnsKeepLocalFirst.
+  To skip DNS changes completely, run with -SkipDns.
 
 --------------------------------------------------------------------------------
  WINDOWS 10 LTSC NOTES

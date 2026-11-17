@@ -2,6 +2,18 @@
 
 # Changelog
 
+## [1.7.0]
+
+### What's new
+- Added a non-destructive System Audit mode (`CHECK-SETUP.cmd` / `-Audit`): quickly tests your gaming settings, calculates an optimization score, and flags whether any Windows Updates have undone your tweaks without changing any files.
+- Added a double-click `VIEW-LOGS.cmd` launcher to immediately find and open your latest setup logs in Notepad.
+- Added pre-packaged release zip downloads to releases so you can download everything ready-to-run with a single click.
+
+### Bug fixes
+- Improved command-line parameter handling when running unattended checks alongside self-elevation.
+
+---
+
 ## [1.6.0]
 
 ### What's new

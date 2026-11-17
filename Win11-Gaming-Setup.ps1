@@ -107,11 +107,13 @@
     Revert : .\Revert.ps1 (next to this script) or C:\ProgramData\Win11GamingSetup\Revert.ps1
     Logs   : C:\ProgramData\Win11GamingSetup\logs
     Backup : C:\ProgramData\Win11GamingSetup\backup
-    Version: 1.6.0
+    Version: 1.7.0
 #>
 
 [CmdletBinding()]
 param(
+    [Alias('Check')]
+    [switch]$Audit,
     [switch]$SkipCleanup,
     [switch]$SkipRestorePoint,
     [switch]$KeepPrintSpooler,
@@ -137,7 +139,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
-$ScriptVersion = '1.6.0'
+$ScriptVersion = '1.7.0'
 
 # ---------------------------------------------------------------- self-elevate
 if (-not $ElevatedChild) {
@@ -252,6 +254,142 @@ $IsWin11_24H2Plus = $winBuild -ge 26100
 Log ('Family: {0} ({1})' -f $(if ($IsWin11) { if ($IsWin11_24H2Plus) { 'Windows 11 (24H2 - 26H2+)' } else { 'Windows 11' } } else { 'Windows 10 (22H2 / legacy)' }), $(if ($IsLTSC) { 'LTSC / Enterprise' } else { 'Consumer / Standard' })) 'DarkGray'
 if ($IsLTSC) { Log 'Edition: LTSC / IoT - consumer bloat is mostly missing, focusing on services and telemetry' 'DarkGray' }
 else { Log 'Edition: Consumer / Standard - applying comprehensive debloat and background app pruning' 'DarkGray' }
+
+# Non-destructive system audit mode to verify gaming optimizations and detect Windows Update drift
+if ($Audit) {
+    Section 'System Gaming Optimization Audit'
+    Log '  Checking current system state against gaming optimization standards...' 'DarkGray'
+    Log '  (Non-destructive check: zero modifications will be made)' 'DarkGray'
+    Log ''
+
+    $checksPassed = 0
+    $checksTotal  = 0
+
+    # Evaluates an audit check and records pass/drift status
+    function Test-AuditCheck([string]$Name, [scriptblock]$TestBlock) {
+        $script:checksTotal++
+        try {
+            $pass = & $TestBlock
+            if ($pass) {
+                $script:checksPassed++
+                Log ('  [PASS]  {0}' -f $Name) 'Green'
+            } else {
+                Log ('  [DRIFT] {0}' -f $Name) 'Yellow'
+            }
+        } catch {
+            Log ('  [WARN]  {0} (Error: {1})' -f $Name, $_.Exception.Message) 'DarkYellow'
+        }
+    }
+
+    Test-AuditCheck 'Windows Game Mode enabled' {
+        (Get-ItemPropertyValue 'HKCU:\Software\Microsoft\GameBar' 'AllowAutoGameMode' -ErrorAction SilentlyContinue) -eq 1
+    }
+
+    Test-AuditCheck 'Xbox Game DVR background recording disabled' {
+        $d1 = (Get-ItemPropertyValue 'HKCU:\System\GameConfigStore' 'GameDVR_Enabled' -ErrorAction SilentlyContinue) -eq 0
+        $d2 = (Get-ItemPropertyValue 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\GameDVR' 'AppCaptureEnabled' -ErrorAction SilentlyContinue) -eq 0
+        $d1 -and $d2
+    }
+
+    Test-AuditCheck 'Diagnostic Tracking service (DiagTrack) disabled' {
+        (Get-SvcStartValue 'DiagTrack') -eq 4
+    }
+
+    Test-AuditCheck 'WAP Push service (dmwappushservice) disabled' {
+        (Get-SvcStartValue 'dmwappushservice') -eq 4
+    }
+
+    Test-AuditCheck 'Windows Telemetry data collection policy set to 0' {
+        (Get-ItemPropertyValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' 'AllowTelemetry' -ErrorAction SilentlyContinue) -eq 0
+    }
+
+    Test-AuditCheck 'Windows Consumer Cloud Content features disabled' {
+        (Get-ItemPropertyValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableWindowsConsumerFeatures' -ErrorAction SilentlyContinue) -eq 1
+    }
+
+    Test-AuditCheck 'Activity History & Feed tracking disabled' {
+        $a1 = (Get-ItemPropertyValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' 'PublishUserActivities' -ErrorAction SilentlyContinue) -eq 0
+        $a2 = (Get-ItemPropertyValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' 'EnableActivityFeed' -ErrorAction SilentlyContinue) -eq 0
+        $a1 -and $a2
+    }
+
+    Test-AuditCheck 'Multimedia network packet throttling disabled (NetworkThrottlingIndex = 0xFFFFFFFF)' {
+        (Get-ItemPropertyValue 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'NetworkThrottlingIndex' -ErrorAction SilentlyContinue) -eq 0xffffffff
+    }
+
+    Test-AuditCheck 'Multimedia system gaming responsiveness prioritized (SystemResponsiveness = 0)' {
+        (Get-ItemPropertyValue 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'SystemResponsiveness' -ErrorAction SilentlyContinue) -eq 0
+    }
+
+    Test-AuditCheck 'Multimedia Tasks Priority set for Games (GPU Priority = 8, Priority = 6)' {
+        $gp = (Get-ItemPropertyValue 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games' 'GPU Priority' -ErrorAction SilentlyContinue) -eq 8
+        $p  = (Get-ItemPropertyValue 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games' 'Priority' -ErrorAction SilentlyContinue) -eq 6
+        $gp -and $p
+    }
+
+    Test-AuditCheck 'TCP latency optimization (TcpAckFrequency & TCPNoDelay) on active adapters' {
+        $activeG = @(Get-CimInstance Win32_NetworkAdapterConfiguration -Filter "IPEnabled = TRUE" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty SettingID)
+        if ($activeG.Count -eq 0) { return $true }
+        $allTuned = $true
+        foreach ($g in $activeG) {
+            $p = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$g"
+            $ack = Get-ItemPropertyValue $p 'TcpAckFrequency' -ErrorAction SilentlyContinue
+            $del = Get-ItemPropertyValue $p 'TCPNoDelay' -ErrorAction SilentlyContinue
+            if ($ack -ne 1 -or $del -ne 1) { $allTuned = $false; break }
+        }
+        $allTuned
+    }
+
+    Test-AuditCheck 'High or Ultimate Performance power scheme active' {
+        $activeGuid = (& powercfg.exe /getactivescheme 2>&1)
+        $activeGuid -match 'e9a42b02-d5df-448d-aa00-03f14749eb61|8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c|High Performance|Ultimate Performance'
+    }
+
+    if ($IsWin11) {
+        Test-AuditCheck 'Windows Copilot disabled' {
+            (Get-ItemPropertyValue 'HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' -ErrorAction SilentlyContinue) -eq 1
+        }
+    }
+
+    Test-AuditCheck 'Unnecessary background services disabled (RetailDemo, MapsBroker, WMPNetworkSvc)' {
+        $svcCheck = $true
+        foreach ($s in @('RetailDemo', 'MapsBroker', 'WMPNetworkSvc')) {
+            $start = Get-SvcStartValue $s
+            if ($start -ne 4 -and (Get-Service $s -ErrorAction SilentlyContinue)) {
+                $svcCheck = $false; break
+            }
+        }
+        $svcCheck
+    }
+
+    Log ''
+    Section 'Audit Summary'
+    $pct = if ($checksTotal -gt 0) { [math]::Round(($checksPassed / $checksTotal) * 100) } else { 100 }
+    $scoreColor = if ($pct -ge 90) { 'Green' } elseif ($pct -ge 70) { 'Yellow' } else { 'Red' }
+    Log ('  Checks passed           : {0} / {1} ({2}%)' -f $checksPassed, $checksTotal, $pct) $scoreColor
+    if ($pct -eq 100) {
+        Log '  Status                  : OPTIMAL - Your system is fully tuned for maximum gaming performance!' 'Green'
+    } elseif ($pct -ge 80) {
+        Log '  Status                  : GOOD - Minor items drifted. Run RUN-AS-ADMIN.cmd to restore 100% optimization.' 'Yellow'
+    } else {
+        Log '  Status                  : DRIFT DETECTED - Windows Update has reset settings. Run RUN-AS-ADMIN.cmd.' 'Red'
+    }
+    Log ('  Log file                : {0}' -f $script:LogFile) 'DarkGray'
+    Log ('  Quick log (logs.txt)    : {0}' -f $script:LogTxtLocal) 'DarkGray'
+    Log ''
+    Log '================================================================================' 'Cyan'
+    Log '  Created with ❤️ by Mayanktaker Computers & Web Development' 'Cyan'
+    Log '  Website: https://mayanktaker.com' 'Green'
+    Log ''
+    Log '  ☕ Did this setup save your FPS or rescue your PC from Windows bloat?' 'Yellow'
+    Log '     Fuel Mayank with a coffee: https://buymeacoffee.com/mayanktaker' 'Yellow'
+    Log '     (Because caffeine converts directly into higher frame rates and zero micro-stutters!)' 'DarkGray'
+    Log '================================================================================' 'Cyan'
+    Log ''
+
+    if (-not $NoPause) { Read-Host 'Press Enter to close' }
+    return
+}
 
 $freeBefore = [math]::Round((Get-PSDrive -Name ($env:SystemDrive -replace ':','')).Free / 1GB, 2)
 

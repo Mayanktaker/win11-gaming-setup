@@ -1,0 +1,46 @@
+# © Mayanktaker Computers & Web Development | https://mayanktaker.com
+name: Release Package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create release zip archive
+        run: |
+          TAG_NAME="${{ github.event.release.tag_name }}"
+          if [ -z "$TAG_NAME" ]; then
+            TAG_NAME="$(git describe --tags --abbrev=0 2>/dev/null || echo 'latest')"
+          fi
+          ZIP_NAME="win11-gaming-setup-${TAG_NAME}.zip"
+          echo "Packaging ${ZIP_NAME}..."
+          zip -9 "${ZIP_NAME}" \
+            Win11-Gaming-Setup.ps1 \
+            Revert.ps1 \
+            RUN-AS-ADMIN.cmd \
+            REVERT-AS-ADMIN.cmd \
+            VIEW-LOGS.cmd \
+            CHECK-SETUP.cmd \
+            RUN-COMMANDS.txt \
+            README.md \
+            CHANGELOG.md \
+            LICENSE
+
+          echo "ZIP_NAME=${ZIP_NAME}" >> $GITHUB_ENV
+
+      - name: Upload zip asset to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" "${ZIP_NAME}" --clobber

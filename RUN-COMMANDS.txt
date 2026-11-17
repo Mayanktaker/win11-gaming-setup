@@ -8,9 +8,11 @@ FASTEST WAY - NO TYPING AT ALL:
   Double-click  RUN-AS-ADMIN.cmd
   (or right-click it and choose "Run as administrator").
   It asks for UAC rights at the very start, runs the whole setup and leaves
-  the window open with the summary.  Click YES on the UAC prompt.
+  the window open with the summary. Click YES on the UAC prompt.
 
-  To undo later: double-click  REVERT-AS-ADMIN.cmd
+  To check status / detect drift: double-click  CHECK-SETUP.cmd
+  To view recent logs in Notepad:  double-click  VIEW-LOGS.cmd
+  To undo later:                  double-click  REVERT-AS-ADMIN.cmd
 
 Everything below is copy-paste ready. Run the commands in the SAME folder that
 contains Win11-Gaming-Setup.ps1, with an administrator account.
@@ -67,6 +69,9 @@ this step PowerShell may refuse to run the script.
 
       # Unattended: no "press Enter" at the end
       powershell -NoProfile -ExecutionPolicy Bypass -File .\Win11-Gaming-Setup.ps1 -NoPause
+
+      # System audit: non-destructive check to verify tweaks and detect Windows Update drift
+      powershell -NoProfile -ExecutionPolicy Bypass -File .\Win11-Gaming-Setup.ps1 -Audit
 
 --------------------------------------------------------------------------------
  STEP 4 - Reboot

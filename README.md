@@ -8,7 +8,7 @@
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?style=flat-square&logo=powershell)
 ![Admin](https://img.shields.io/badge/requires-Administrator-red?style=flat-square)
 ![Revert](https://img.shields.io/badge/revert-included-success?style=flat-square)
-![Version](https://img.shields.io/badge/version-1.6.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.7.0-blue?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
 ---
@@ -96,23 +96,10 @@ From the test machine: **i5-2500K, 12 GB DDR3-1333, GTX 750 Ti 2 GB, Windows 11 
 
 The window stays open and shows the summary when it finishes.
 
-### Option 2 — right-click
-
-Right-click `RUN-AS-ADMIN.cmd` → **Run as administrator** → **Yes**.
-
-### Option 3 — PowerShell
-
-```powershell
-cd "$env:USERPROFILE\Downloads\Win11-Gaming-Setup"
-Get-ChildItem -Path . -Filter *.ps1 | Unblock-File
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Win11-Gaming-Setup.ps1
-```
-
-The script also self-elevates if launched from a non-administrator PowerShell, so it asks for UAC rights by itself.
-
-**Afterwards: reboot once.** Some service and Explorer changes only fully settle after a restart.
-
-To undo: double-click **`REVERT-AS-ADMIN.cmd`** (details [below](#-revert--undo-everything)).
+### Convenient Quick Tools
+- **Audit & Drift Detection:** Double-click **`CHECK-SETUP.cmd`** to run a non-destructive audit anytime. Tests key gaming settings, outputs an optimization score, and alerts you if Windows Update has undone any tweaks.
+- **View Logs:** Double-click **`VIEW-LOGS.cmd`** to immediately open the latest setup log in Notepad.
+- **To Undo:** Double-click **`REVERT-AS-ADMIN.cmd`** (details [below](#-revert--undo-everything)).
 
 ---
 
@@ -253,6 +240,7 @@ See [Revert](#-revert--undo-everything).
 
 | Flag | What it does |
 |---|---|
+| `-Audit` (or `-Check`) | Non-destructive audit: verifies gaming optimizations, calculates an integrity score, and detects Windows Update drift without making changes |
 | `-KeepPrintSpooler` | Keep printing enabled |
 | `-KeepWindowsSearch` | Keep the search indexer (`WSearch`) |
 | `-KeepDefenderDailyScan` | Keep a daily Defender scan at 03:00 |
@@ -406,7 +394,9 @@ Full copy-paste instructions are in **[`RUN-COMMANDS.txt`](RUN-COMMANDS.txt)**.
 
 ```
 Win11-Gaming-Setup/
-├── RUN-AS-ADMIN.cmd         # double-click to run everything
+├── RUN-AS-ADMIN.cmd         # double-click to run setup
+├── CHECK-SETUP.cmd          # double-click to audit tweaks & detect drift
+├── VIEW-LOGS.cmd            # double-click to open logs in Notepad
 ├── REVERT-AS-ADMIN.cmd      # double-click to undo
 ├── Win11-Gaming-Setup.ps1   # main script
 ├── Revert.ps1               # undo script (regenerated on every run)
@@ -414,6 +404,7 @@ Win11-Gaming-Setup/
 ├── logs.txt                 # instant mirror log of the latest run
 ├── CHANGELOG.md             # user-facing version history
 ├── AGENTS.md                # AI agent operating map
+├── .github/workflows/       # automated release packaging workflow
 └── README.md
 
 C:\ProgramData\Win11GamingSetup\

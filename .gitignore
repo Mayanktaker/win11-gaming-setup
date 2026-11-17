@@ -1,0 +1,13 @@
+# Windows / PowerShell
+*.log
+*.tmp
+Thumbs.db
+desktop.ini
+
+# Local run artefacts
+setup-*.log
+services-backup.json
+
+# Editors
+.vscode/
+.idea/

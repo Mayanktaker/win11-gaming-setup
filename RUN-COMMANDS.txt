@@ -1,0 +1,163 @@
+================================================================================
+ WINDOWS GAMING SETUP - READY-TO-RUN COMMANDS
+ Target: Windows 10 (incl. LTSC 2019 / 2021 / IoT) and Windows 11
+================================================================================
+
+Everything below is copy-paste ready. Run the commands in the SAME folder that
+contains Win11-Gaming-Setup.ps1, with an administrator account.
+
+--------------------------------------------------------------------------------
+ STEP 1 - Open PowerShell in the project folder
+--------------------------------------------------------------------------------
+
+  Option A (easiest)
+    Open the folder in File Explorer, click the address bar, type  powershell
+    and press Enter. A PowerShell window opens in that folder.
+
+  Option B
+    Press Win+R, type  powershell  and press Enter, then run (edit the path):
+
+      cd "$env:USERPROFILE\Downloads\Win11-Gaming-Setup"
+
+  Check that you are in the right place - this must list the script:
+
+      Get-ChildItem *.ps1
+
+--------------------------------------------------------------------------------
+ STEP 2 - Unblock the scripts (once, after copying from USB / network)
+--------------------------------------------------------------------------------
+
+      Get-ChildItem -Path . -Filter *.ps1 | Unblock-File
+
+Files downloaded or copied from another PC carry a "mark of the web"; without
+this step PowerShell may refuse to run the script.
+
+--------------------------------------------------------------------------------
+ STEP 3 - Run the setup
+--------------------------------------------------------------------------------
+
+  Standard run (recommended, 5-15 minutes, ends with a summary):
+
+      powershell -NoProfile -ExecutionPolicy Bypass -File .\Win11-Gaming-Setup.ps1
+
+  The script re-launches itself elevated - press "Yes" on the UAC prompt.
+
+  Useful variations (copy one line):
+
+      # Keep printing + empty the Recycle Bin
+      powershell -NoProfile -ExecutionPolicy Bypass -File .\Win11-Gaming-Setup.ps1 -KeepPrintSpooler -EmptyRecycleBin
+
+      # Keep Windows Search indexing (if you search file contents a lot)
+      powershell -NoProfile -ExecutionPolicy Bypass -File .\Win11-Gaming-Setup.ps1 -KeepWindowsSearch
+
+      # Maximum free space (adds DISM component cleanup, can take 10-30 min)
+      powershell -NoProfile -ExecutionPolicy Bypass -File .\Win11-Gaming-Setup.ps1 -EmptyRecycleBin -DeepComponentCleanup
+
+      # No app removal, no cleanup (tweaks + services only)
+      powershell -NoProfile -ExecutionPolicy Bypass -File .\Win11-Gaming-Setup.ps1 -SkipDebloat -SkipCleanup
+
+      # Unattended: no "press Enter" at the end
+      powershell -NoProfile -ExecutionPolicy Bypass -File .\Win11-Gaming-Setup.ps1 -NoPause
+
+--------------------------------------------------------------------------------
+ STEP 4 - Reboot
+--------------------------------------------------------------------------------
+
+      Restart-Computer
+
+  Some service and Explorer changes only settle after a reboot.
+
+--------------------------------------------------------------------------------
+ STEP 5 - Verify the result
+--------------------------------------------------------------------------------
+
+  Free space on the system drive:
+
+      Get-PSDrive C | Select-Object @{n='FreeGB';e={[math]::Round($_.Free/1GB,2)}}
+
+  Open the newest log (service changes, tasks, apps, timings):
+
+      Get-Content (Get-ChildItem "$env:ProgramData\Win11GamingSetup\logs\setup-*.log" |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+
+  Check a few services:
+
+      Get-Service DiagTrack, WSearch, Spooler, SysMain, WlanSvc, WinDefend -ErrorAction SilentlyContinue |
+        Select-Object Name, Status, StartType | Format-Table
+
+  Check Defender is still protecting you (real-time should be True):
+
+      Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled, AntivirusEnabled
+
+  Check network tuning:
+
+      netsh int tcp show global
+
+--------------------------------------------------------------------------------
+ STEP 6 - Undo everything (if needed)
+--------------------------------------------------------------------------------
+
+      powershell -NoProfile -ExecutionPolicy Bypass -File .\Revert.ps1
+
+  Restores service start types and imports every backed-up registry key.
+  Store apps that were removed must be reinstalled from the Microsoft Store.
+
+  Backups live in  C:\ProgramData\Win11GamingSetup\backup
+  Logs live in      C:\ProgramData\Win11GamingSetup\logs
+
+--------------------------------------------------------------------------------
+ FLAGS
+--------------------------------------------------------------------------------
+
+  -KeepPrintSpooler         keep printing enabled
+  -KeepWindowsSearch        keep the search indexer (WSearch)
+  -KeepDefenderDailyScan    keep a daily Defender scan at 03:00
+  -SkipDebloat              do not remove Store apps
+  -SkipCleanup              skip disk cleanup + Windows Update cache reset
+  -SkipRestorePoint         do not create a System Restore point
+  -EmptyRecycleBin          empty the Recycle Bin
+  -DisableMouseAcceleration mouse acceleration off (FPS aiming)
+  -DisableSysMain           force-disable SysMain (auto-off on SSD, kept on HDD)
+  -DeepComponentCleanup     DISM /StartComponentCleanup /ResetBase
+  -NoPause                  no "press Enter" at the end
+
+--------------------------------------------------------------------------------
+ WINDOWS 10 LTSC NOTES
+--------------------------------------------------------------------------------
+
+  * LTSC has no Microsoft Store and almost no consumer apps, so the debloat
+    step usually reports "No removable Store apps found". That is expected.
+  * The Windows 11 classic context menu tweak is skipped automatically.
+  * Widgets, Copilot, News and Interests and the Win11 search UI do not exist
+    on LTSC 2019; the related policies are written anyway and simply ignored.
+  * Windows 10 extras that do apply are applied: Timeline / Activity history
+    upload, News and Interests taskbar feed, Meet Now icon.
+  * LTSC 2019 (build 17763) does not support every Defender parameter; the ones
+    it does not know are skipped with a log line, the rest still apply.
+  * Service names differ between builds. The script checks every service before
+    touching it and skips the ones that are not installed.
+
+--------------------------------------------------------------------------------
+ IF SOMETHING LOOKS WRONG
+--------------------------------------------------------------------------------
+
+  "running scripts is disabled on this system"
+      Use the full command from STEP 3 - it contains -ExecutionPolicy Bypass.
+      Or allow it for this window only:
+          Set-ExecutionPolicy -Scope Process Bypass
+
+  "Access is denied" / nothing changes
+      PowerShell was not elevated. Close it, open a new one as Administrator
+      (Win+X -> Terminal (Admin) / PowerShell (Admin)) and repeat STEP 3.
+
+  "The file ... is not digitally signed"
+      Run STEP 2 again (Unblock-File), then repeat STEP 3.
+
+  Script stops at the restore point step
+      System Restore is disabled on that PC. Nothing is broken - run again with
+      -SkipRestorePoint.
+
+  UAC prompt does not appear
+      Click the taskbar; the consent window is sometimes behind other windows.
+
+================================================================================

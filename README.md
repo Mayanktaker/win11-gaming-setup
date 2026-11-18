@@ -119,7 +119,7 @@ This is not a blind "disable everything" script. Every risky change is guarded b
 | **MDE onboarding** | Presence of Defender-for-Endpoint onboarding keys | Unused `Sense` agent stopped; kept if the PC is actually onboarded |
 | **Service change result** | Registry `Start` value re-read after `sc.exe config` | If Windows refuses the change, it is logged as `NOCHG`, not silently assumed |
 | **Running dependents** | `DependentServices` check | A service with running dependents is skipped (`SKIP`) instead of breaking something |
-| **Re-runs** | Existing `services-backup.json` is loaded first | Original values are **merged**, never overwritten |
+| **Re-runs** | Existing backups are loaded or kept as-is | Original values are **merged or preserved**, never overwritten |
 
 ---
 
@@ -287,6 +287,7 @@ Examples:
 | Hardware detection | Disabling WiFi/Bluetooth/camera/scanner services on a PC that has that hardware |
 | LAN detection | Other PCs disappearing from Explorer → Network |
 | Backup merge | Re-runs never overwrite the original service states |
+| Backup snapshots | Every backup (`.reg`, power scheme, hibernation, SMB1, DNS, Defender) is a **first-run snapshot** — later runs keep the originals |
 | Restore point attempt | A Windows-level rollback point before changes |
 | No personal-file touch | Documents, photos and game saves are never deleted |
 
@@ -306,14 +307,19 @@ powershell -ExecutionPolicy Bypass -File .\Revert.ps1
 |---|---|
 | Service start types | `backup\services-backup.json` |
 | Registry values | `backup\*.reg` imported |
-| Power scheme & hibernation | `backup\power-scheme.txt` + `powercfg /h on` |
+| Registry keys the script created | `backup\created-reg-paths.json` deleted |
+| Power scheme | `backup\power-scheme.txt` re-activated; schemes created by the setup are deleted |
+| Hibernation | Only re-enabled if it was on before the setup ran (`backup\hibernation-state.json`) |
 | Scheduled tasks | `backup\tasks-backup.json` re-enabled |
 | SMB1 configuration | `backup\smb1.reg` + `Set-SmbServerConfiguration` |
 | DNS servers | `backup\dns-backup.json` (or DHCP automatic) |
+| Defender preferences | `backup\defender-preferences.json` (scan cap, schedule, catch-up scans) |
 | Search UI | `SearchHost.exe.disabled` renamed back, owner restored, `SearchHost-Kill` / `SearchHost-Trim` tasks removed |
 | Logging | Full audit trail written to `logs\revert-*.log` |
 
 > 📌 Uninstalled Store apps are **not** reinstalled automatically — get them from the Microsoft Store. A reboot after revert is recommended.
+>
+> 📌 Backups are snapshots from the **first run**. If you deliberately change settings and want Revert to restore *that* state instead, delete `C:\ProgramData\Win11GamingSetup\backup` and run the script once more to re-baseline.
 
 ---
 
@@ -372,6 +378,7 @@ Full copy-paste instructions are in **[`RUN-COMMANDS.txt`](RUN-COMMANDS.txt)**.
 | Some registry lines show "unauthorized operation" | Windows protects a few policy keys even from an elevated user; those tweaks are cosmetic and harmless |
 | File-content search no longer works | Expected: `WSearch` is off. Re-enable with `-KeepWindowsSearch` or `Revert.ps1` |
 | Printing stopped | Expected: `Spooler` is off. Add `-KeepPrintSpooler` and re-run |
+| Windows 11 Settings → Power is greyed out or closes | Expected while a legacy plan (High / Ultimate Performance) is active: Settings only manages Power mode on **Balanced**. Change plans in **Control Panel → Power Options** (`powercfg.cpl`), or run `Revert.ps1` to get your original scheme back. Modern Standby (S0) PCs keep their original scheme automatically |
 
 ---
 

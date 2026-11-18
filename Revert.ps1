@@ -42,6 +42,21 @@ Get-ChildItem (Join-Path $root 'backup') -Filter '*.reg' -ErrorAction SilentlyCo
     RLog ("  imported {0}" -f $_.Name) 'Green'
 }
 
+# 2b. Registry keys the setup created (they were never exported)
+$createdJson = Join-Path $root 'backup\created-reg-paths.json'
+if (Test-Path $createdJson) {
+    try {
+        foreach ($c in @(Get-Content $createdJson -Raw | ConvertFrom-Json)) {
+            if ($c -and (Test-Path ('Registry::' + $c))) {
+                & reg.exe delete $c /f 2>&1 | Out-Null
+                RLog ("  removed created key: {0}" -f $c) 'Green'
+            }
+        }
+    } catch {
+        RLog ("  created-key removal failed: {0}" -f $_.Exception.Message) 'Yellow'
+    }
+}
+
 # 3. Power scheme & hibernation
 $pSchemeFile = Join-Path $root 'backup\power-scheme.txt'
 if (Test-Path $pSchemeFile) {
@@ -49,11 +64,39 @@ if (Test-Path $pSchemeFile) {
         $scheme = (Get-Content $pSchemeFile -Raw).Trim()
         if ($scheme) {
             & powercfg.exe /setactive $scheme 2>&1 | Out-Null
-            & powercfg.exe /h on 2>&1 | Out-Null
-            RLog ("  restored power scheme -> {0} (hibernation ON)" -f $scheme) 'Green'
+            RLog ("  restored power scheme -> {0}" -f $scheme) 'Green'
         }
     } catch {
         RLog ("  power scheme restore failed: {0}" -f $_.Exception.Message) 'Yellow'
+    }
+}
+
+# 3b. Hibernation: only re-enable if it was enabled before the setup ran
+$hibJson = Join-Path $root 'backup\hibernation-state.json'
+$hibWasOn = $false
+if (Test-Path $hibJson) {
+    try { $hibWasOn = ((Get-Content $hibJson -Raw | ConvertFrom-Json).HibernationOn -eq $true) } catch { }
+}
+if ($hibWasOn) {
+    & powercfg.exe /h on 2>&1 | Out-Null
+    RLog "  hibernation re-enabled (it was on before)" 'Green'
+} else {
+    RLog "  hibernation left off (it was off before)" 'DarkGray'
+}
+
+# 3c. Power schemes the setup created are removed again
+$createdScheme = Join-Path $root 'backup\power-created.txt'
+if (Test-Path $createdScheme) {
+    try {
+        $cg = (Get-Content $createdScheme -Raw).Trim()
+        $activeGuid = [regex]::Match(((powercfg /getactivescheme) -join ' '), '[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}').Value
+        if ($cg -and $cg -ne $activeGuid) {
+            & powercfg.exe /delete $cg 2>&1 | Out-Null
+            RLog ("  removed power scheme created by setup: {0}" -f $cg) 'Green'
+        }
+        Remove-Item $createdScheme -Force -ErrorAction SilentlyContinue
+    } catch {
+        RLog ("  created power scheme cleanup failed: {0}" -f $_.Exception.Message) 'Yellow'
     }
 }
 
@@ -115,11 +158,37 @@ if (Test-Path $marker) {
             Rename-Item -Path $disabled -NewName (Split-Path $original -Leaf) -Force -ErrorAction Stop
             & icacls.exe $original /setowner 'NT SERVICE\TrustedInstaller' 2>&1 | Out-Null
             RLog ("  restored {0}" -f $original) 'Green'
+        } elseif ((Test-Path $disabled) -and (Test-Path $original)) {
+            Remove-Item $disabled -Force -ErrorAction SilentlyContinue
+            RLog ("  removed orphaned disabled copy: {0}" -f $disabled) 'Green'
         }
         Remove-Item $marker -Force -ErrorAction SilentlyContinue
     } catch {
         RLog ("  SearchHost restore failed: {0}" -f $_.Exception.Message) 'Yellow'
     }
+}
+
+# 8. Defender preferences: restore the values saved before tuning
+$mpBak = Join-Path $root 'backup\defender-preferences.json'
+if (Get-Command Set-MpPreference -ErrorAction SilentlyContinue) {
+    if (Test-Path $mpBak) {
+        try {
+            $p = Get-Content $mpBak -Raw | ConvertFrom-Json
+            foreach ($prop in $p.PSObject.Properties) {
+                try {
+                    $h = @{ $prop.Name = $prop.Value }
+                    & Set-MpPreference @h -ErrorAction Stop
+                } catch { }
+            }
+            RLog "  Defender preferences restored" 'Green'
+        } catch {
+            RLog ("  Defender preference restore failed: {0}" -f $_.Exception.Message) 'Yellow'
+        }
+    } else {
+        RLog "  Defender preferences: no backup found (nothing to restore)" 'DarkGray'
+    }
+} else {
+    RLog "  Set-MpPreference not available - Defender preferences skipped" 'DarkGray'
 }
 
 RLog ''

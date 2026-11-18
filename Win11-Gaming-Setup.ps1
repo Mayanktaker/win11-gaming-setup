@@ -17,7 +17,7 @@
       2.  Power plan + PCIe ASPM off + sleep never (gaming profile)
       3.  Gaming registry tweaks (GameDVR off, Game Mode on, MMCSS, throttling off)
       4.  Background junk off (Copilot, Widgets, Phone Link, ads, telemetry tasks)
-      4b. Windows Defender resource tuning (low CPU priority, 20% scan cap)
+      4b. Windows Defender resource tuning (low CPU priority, 10% scan cap)
       4c. Store app debloat (keeps Photos, Snipping Tool, Solitaire, Media Player)
       5.  Disk cleanup (temp, WER, shader caches, WinRE leftover, WU cache, icons)
       6.  Service slimming for a gaming-only PC, with LAN-aware detection:
@@ -29,7 +29,9 @@
       9.  Automatic backup + Revert.ps1 generator
 
     Nothing security related is disabled: Defender, Firewall, SmartScreen,
-    Windows Update, BITS and the SMB/LAN stack stay untouched.
+    Windows Update and BITS stay untouched. SMB2/3 and LAN discovery keep
+    working; only the insecure legacy SMB1 dialect is disabled (-KeepSMB1
+    keeps it for old NAS/XP boxes).
 
 .PARAMETER SkipCleanup
     Skip disk cleanup and the Windows Update cache reset.
@@ -107,7 +109,7 @@
     Revert : .\Revert.ps1 (next to this script) or C:\ProgramData\Win11GamingSetup\Revert.ps1
     Logs   : C:\ProgramData\Win11GamingSetup\logs
     Backup : C:\ProgramData\Win11GamingSetup\backup
-    Version: 1.7.0
+    Version: 1.7.1
 #>
 
 [CmdletBinding()]
@@ -139,7 +141,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
-$ScriptVersion = '1.7.0'
+$ScriptVersion = '1.7.1'
 
 # ---------------------------------------------------------------- self-elevate
 if (-not $ElevatedChild) {
@@ -178,6 +180,7 @@ $script:LogFile = Join-Path $LogDir ('setup-{0}.log' -f (Get-Date -Format 'yyyyM
 $script:LogTxtRoot = Join-Path $Root 'logs.txt'
 $script:LogTxtLocal = Join-Path $ScriptDir 'logs.txt'
 $svcOriginal = @{}
+$script:CreatedRegPaths = [System.Collections.Generic.List[string]]::new()
 $script:Changed = 0
 $script:Stopwatch = [Diagnostics.Stopwatch]::StartNew()
 
@@ -212,7 +215,12 @@ function Set-Reg {
     param([string]$Path, [string]$Name, $Value, [string]$Type = 'DWord')
     if ($DryRun) { Log ('  [DRY] Set-Reg {0}\{1} = {2}' -f $Path, $Name, $Value) 'DarkGray'; return $true }
     try {
-        if (-not (Test-Path $Path)) { New-Item -Path $Path -Force -ErrorAction Stop | Out-Null }
+        if (-not (Test-Path $Path)) {
+            # Remember keys this script creates so Revert can delete them again
+            $regPath = $Path -replace '^HKLM:\\', 'HKLM\' -replace '^HKCU:\\', 'HKCU\'
+            if (-not $script:CreatedRegPaths.Contains($regPath)) { $script:CreatedRegPaths.Add($regPath) }
+            New-Item -Path $Path -Force -ErrorAction Stop | Out-Null
+        }
         New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force -ErrorAction Stop | Out-Null
         return $true
     } catch {
@@ -314,7 +322,8 @@ if ($Audit) {
     }
 
     Test-AuditCheck 'Multimedia network packet throttling disabled (NetworkThrottlingIndex = 0xFFFFFFFF)' {
-        (Get-ItemPropertyValue 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'NetworkThrottlingIndex' -ErrorAction SilentlyContinue) -eq 0xffffffff
+        $nti = Get-ItemPropertyValue 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'NetworkThrottlingIndex' -ErrorAction SilentlyContinue
+        ($nti -eq 0xffffffff) -or ($nti -eq 4294967295)
     }
 
     Test-AuditCheck 'Multimedia system gaming responsiveness prioritized (SystemResponsiveness = 0)' {
@@ -395,7 +404,9 @@ $freeBefore = [math]::Round((Get-PSDrive -Name ($env:SystemDrive -replace ':',''
 
 # ---------------------------------------------------------------- restore point
 Section 'System Restore point'
-if (-not $SkipRestorePoint) {
+if ($DryRun) {
+    Log '  Skipped (dry-run: no restore point).'
+} elseif (-not $SkipRestorePoint) {
     try {
         Enable-ComputerRestore -Drive "$env:SystemDrive\" -ErrorAction SilentlyContinue
         Checkpoint-Computer -Description 'Before Win11 Gaming Setup' -RestorePointType MODIFY_SETTINGS -ErrorAction Stop
@@ -436,14 +447,31 @@ $regBackups = @(
     @{ H = 'HKCU'; P = 'Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo'; F = 'user-advertisinginfo.reg' },
     @{ H = 'HKLM'; P = 'SYSTEM\CurrentControlSet\Services\Ndu'; F = 'ndu.reg' },
     @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting'; F = 'wer.reg' },
-    @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Windows\System'; F = 'policy-system.reg' }
+    @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Windows\System'; F = 'policy-system.reg' },
+    @{ H = 'HKLM'; P = 'SYSTEM\CurrentControlSet\Control\Session Manager\Power'; F = 'session-power.reg' },
+    @{ H = 'HKLM'; P = 'SYSTEM\CurrentControlSet\Control\PriorityControl'; F = 'prioritycontrol.reg' },
+    @{ H = 'HKLM'; P = 'SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Windows.Gaming.GameBar.PresenceServer.Internal.PresenceWriter'; F = 'gamebarwriter.reg' },
+    @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Windows\GameDVR'; F = 'policy-gamedvr.reg' },
+    @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Windows\CloudContent'; F = 'policy-cloudcontent.reg' },
+    @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\SQMClient\Windows'; F = 'policy-sqmclient.reg' },
+    @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Windows\Windows Feeds'; F = 'policy-feeds.reg' },
+    @{ H = 'HKLM'; P = 'SOFTWARE\Policies\Microsoft\Windows\Psched'; F = 'policy-psched.reg' },
+    @{ H = 'HKLM'; P = 'SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces'; F = 'tcpip-interfaces.reg' },
+    @{ H = 'HKCU'; P = 'Software\Microsoft\Windows\CurrentVersion\Policies\Explorer'; F = 'user-policy-explorer.reg' },
+    @{ H = 'HKCU'; P = 'Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects'; F = 'user-visualeffects.reg' },
+    @{ H = 'HKCU'; P = 'Software\Microsoft\GameBar'; F = 'gamebar.reg' },
+    @{ H = 'HKLM'; P = 'SYSTEM\CurrentControlSet\Control\GraphicsDrivers'; F = 'graphicsdrivers.reg' }
 )
 $okBackups = 0
 foreach ($b in $regBackups) {
     $psPath = if ($b.H -eq 'HKLM') { 'HKLM:\' + $b.P } else { 'HKCU:\' + $b.P }
-    if (Test-Path $psPath) {
-        & reg.exe export ('{0}\{1}' -f $b.H, $b.P) (Join-Path $BakDir $b.F) /y 2>&1 | Out-Null
-        if (Test-Path (Join-Path $BakDir $b.F)) { $okBackups++ }
+    $bakFile = Join-Path $BakDir $b.F
+    # First run wins: never overwrite an existing snapshot with current values
+    if (-not $DryRun -and (Test-Path $psPath) -and -not (Test-Path $bakFile)) {
+        & reg.exe export ('{0}\{1}' -f $b.H, $b.P) $bakFile /y 2>&1 | Out-Null
+        if (Test-Path $bakFile) { $okBackups++ }
+    } elseif (Test-Path $bakFile) {
+        $okBackups++
     }
 }
 Log ('  {0} registry keys backed up -> {1}' -f $okBackups, $BakDir) 'Green'
@@ -455,9 +483,18 @@ Section 'Explorer / UI responsiveness'
 # Windows 10 already ships the classic menu, so this is skipped there.
 if ($IsWin11) {
     $clsid = 'HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32'
-    if (-not (Test-Path $clsid)) { New-Item -Path $clsid -Force | Out-Null }
-    Set-ItemProperty -Path $clsid -Name '(default)' -Value '' -ErrorAction SilentlyContinue
-    Log '  Classic right-click menu enabled'
+    $clsidParent = 'HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}'
+    if ($DryRun) {
+        Log '  [DRY] classic right-click menu: key would be created' 'DarkGray'
+    } else {
+        if (-not (Test-Path $clsidParent)) {
+            $regKey = $clsidParent -replace '^HKCU:\\', 'HKCU\'
+            if (-not $script:CreatedRegPaths.Contains($regKey)) { $script:CreatedRegPaths.Add($regKey) }
+        }
+        if (-not (Test-Path $clsid)) { New-Item -Path $clsid -Force | Out-Null }
+        Set-ItemProperty -Path $clsid -Name '(default)' -Value '' -ErrorAction SilentlyContinue
+        Log '  Classic right-click menu enabled'
+    }
 } else {
     Log '  Windows 10 - classic right-click menu already present, skipped' 'DarkGray'
 }
@@ -496,42 +533,114 @@ try {
     $pMatch = [regex]::Match(((powercfg /getactivescheme) -join ' '), '[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}')
     if ($pMatch.Success) { $script:OrigPowerScheme = $pMatch.Value }
 } catch { }
-if ($script:OrigPowerScheme) {
+if ($script:OrigPowerScheme -and -not $DryRun -and -not (Test-Path (Join-Path $BakDir 'power-scheme.txt'))) {
     Set-Content -Path (Join-Path $BakDir 'power-scheme.txt') -Value $script:OrigPowerScheme -Encoding ASCII
     Log ('  Original power scheme backed up: {0}' -f $script:OrigPowerScheme) 'DarkGray'
 }
 
-# Ultimate Performance plan (Windows 10/11) with fallback to High Performance
+# Remember hibernation / Fast Startup state so Revert restores exactly this
+$hibState = @{ HibernationOn = $false; FastStartupOn = $false }
+try {
+    $hibState.HibernationOn = ((Get-ItemPropertyValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Power' 'HibernateEnabled' -ErrorAction SilentlyContinue) -eq 1)
+    $hibState.FastStartupOn = ((Get-ItemPropertyValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' 'HiberbootEnabled' -ErrorAction SilentlyContinue) -eq 1)
+} catch { }
+if (-not $DryRun -and -not (Test-Path (Join-Path $BakDir 'hibernation-state.json'))) {
+    $hibState | ConvertTo-Json | Set-Content -Path (Join-Path $BakDir 'hibernation-state.json') -Encoding UTF8
+}
+
+# Modern Standby (S0) machines manage power through Settings, not legacy
+# schemes: forcing High/Ultimate there is what makes the Windows 11 power
+# page unresponsive. Detect it and keep the current scheme instead.
+$modernStandby = $false
+try {
+    $sleepOut = ((powercfg /a) -join ' ')
+    $availPart = ($sleepOut -split 'not available')[0]
+    $modernStandby = ($availPart -match 'Low Power Idle|Standby \(S0')
+} catch { }
+
 $ultPlan = 'e9a42b02-d5df-448d-aa00-03f14749eb61'
 $hiPlan  = '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'
-& powercfg.exe -duplicatescheme $ultPlan 2>&1 | Out-Null
-& powercfg.exe /setactive $ultPlan 2>&1 | Out-Null
-$planNow = (powercfg /getactivescheme) -join ' '
-if ($planNow -notmatch $ultPlan) {
-    & powercfg.exe /setactive $hiPlan 2>&1 | Out-Null
+$createdSchemeFile = Join-Path $BakDir 'power-created.txt'
+
+if ($DryRun) {
+    Log '  [DRY] power scheme activation and hibernation changes skipped' 'DarkGray'
+} elseif ($modernStandby) {
+    Log '  Modern Standby (S0) detected - keeping current scheme so Windows 11 power settings stay usable' 'Green'
+    Log ('  Active plan unchanged -> {0}' -f ((powercfg /getactivescheme) -join ' ')) 'DarkGray'
+} else {
+    # Reuse an existing Ultimate Performance copy instead of duplicating a
+    # new one on every run (duplicates pile up and clutter Power Options).
+    $planList = (powercfg /list) -join ' '
+    $ultGuid = $null
+    if (Test-Path $createdSchemeFile) {
+        $createdGuid = (Get-Content $createdSchemeFile -Raw).Trim()
+        if ($createdGuid -and ($planList -match $createdGuid)) { $ultGuid = $createdGuid }
+    }
+    if (-not $ultGuid) {
+        foreach ($m in [regex]::Matches($planList, '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*\(([^)]+)\)')) {
+            if ($m.Groups[2].Value -match 'Ultimate') { $ultGuid = $m.Groups[1].Value; break }
+        }
+    }
+    if (-not $ultGuid) {
+        # Duplicate once and capture the NEW GUID from the output
+        $dupOut = (& powercfg.exe -duplicatescheme $ultPlan 2>&1) -join ' '
+        $gMatch = [regex]::Match($dupOut, '[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}')
+        if ($gMatch.Success) {
+            $ultGuid = $gMatch.Value
+            Set-Content -Path $createdSchemeFile -Value $ultGuid -Encoding ASCII
+            Log ('  Ultimate Performance scheme created: {0}' -f $ultGuid) 'DarkGray'
+        }
+    }
+    # Remove duplicate Ultimate copies left behind by older script versions
+    foreach ($m in [regex]::Matches($planList, '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*\(([^)]+)\)')) {
+        $dupGuid = $m.Groups[1].Value
+        if (($m.Groups[2].Value -match 'Ultimate') -and $dupGuid -ne $ultGuid -and $dupGuid -ne $script:OrigPowerScheme) {
+            & powercfg.exe /delete $dupGuid 2>&1 | Out-Null
+            Log ('  removed duplicate power scheme: {0}' -f $dupGuid) 'DarkGray'
+        }
+    }
+    $target = $ultGuid
+    if (-not $target) { $target = $hiPlan }
+    & powercfg.exe /setactive $target 2>&1 | Out-Null
     $planNow = (powercfg /getactivescheme) -join ' '
+    if ($planNow -notmatch $target) {
+        Log '  Could not activate performance scheme - keeping current plan' 'DarkYellow'
+    } else {
+        Log ('  Active plan -> {0}' -f $planNow)
+        if ($IsWin11) {
+            Log '  Note: Windows 11 Settings manages Power mode only on the Balanced scheme.' 'DarkGray'
+            Log '  Switch plans in Control Panel > Power Options (powercfg.cpl), not Settings.' 'DarkGray'
+        }
+    }
 }
-Log ('  Active plan -> {0}' -f $planNow)
 
 # Processor minimum state 100% (no downclocking stutter), PCIe ASPM off, no sleep
-& powercfg.exe /setacvalueindex SCHEME_CURRENT 54533251-82be-4824-96c1-47b60b740d00 893dee8e-2bef-41e0-89c6-b55d0929964c 100 2>&1 | Out-Null
-& powercfg.exe /setacvalueindex SCHEME_CURRENT 501a4d13-42af-4429-9fd1-a8218c268e20 ee12f906-d277-404b-b6da-e5fa1a576df5 0 2>&1 | Out-Null
-& powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_SLEEP STANDBYIDLE 0 2>&1 | Out-Null
-& powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_SLEEP HIBERNATEIDLE 0 2>&1 | Out-Null
-& powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOIDLE 600 2>&1 | Out-Null
-& powercfg.exe /setactive SCHEME_CURRENT 2>&1 | Out-Null
-Log '  Processor min 100%, PCIe ASPM off, sleep never, monitor off after 10 min'
+if (-not $DryRun) {
+    & powercfg.exe /setacvalueindex SCHEME_CURRENT 54533251-82be-4824-96c1-47b60b740d00 893dee8e-2bef-41e0-89c6-b55d0929964c 100 2>&1 | Out-Null
+    & powercfg.exe /setacvalueindex SCHEME_CURRENT 501a4d13-42af-4429-9fd1-a8218c268e20 ee12f906-d277-404b-b6da-e5fa1a576df5 0 2>&1 | Out-Null
+    & powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_SLEEP STANDBYIDLE 0 2>&1 | Out-Null
+    & powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_SLEEP HIBERNATEIDLE 0 2>&1 | Out-Null
+    & powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOIDLE 600 2>&1 | Out-Null
+    & powercfg.exe /setactive SCHEME_CURRENT 2>&1 | Out-Null
+    Log '  Processor min 100%, PCIe ASPM off, sleep never, monitor off after 10 min'
+} else {
+    Log '  [DRY] processor/ASPM/sleep index changes skipped' 'DarkGray'
+}
 
 # Fast Startup off + hibernation off (also removes hiberfil.sys)
 Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' 'HiberbootEnabled' 0
-& powercfg.exe /h off 2>&1 | Out-Null
-Log '  Fast Startup OFF, hibernation OFF'
+if ($DryRun) {
+    Log '  [DRY] Fast Startup / hibernation would be turned off' 'DarkGray'
+} else {
+    & powercfg.exe /h off 2>&1 | Out-Null
+    Log '  Fast Startup OFF, hibernation OFF'
+}
 
 # ================================================================ 3. GAMING TWEAKS
 Section 'Gaming registry tweaks'
 
 $mm = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile'
-Set-Reg $mm 'NetworkThrottlingIndex' 4294967295
+Set-Reg $mm 'NetworkThrottlingIndex' 0xffffffff
 Set-Reg $mm 'SystemResponsiveness' 0
 $games = "$mm\Tasks\Games"
 Set-Reg $games 'GPU Priority' 8
@@ -582,7 +691,7 @@ if ($KeepCopilot) {
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'RemoveMicrosoftCopilotApp' 1
     Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' 1
     Set-Reg 'HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' 1
-    Get-Process copilotapp, copilotapphost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    if (-not $DryRun) { Get-Process copilotapp, copilotapphost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }
     Log '  Copilot: policy off + processes stopped'
 }
 
@@ -603,7 +712,7 @@ foreach ($pkg in 'Microsoft.WidgetsPlatformRuntime_8wekyb3d8bbwe','MicrosoftWind
     Set-Reg $k 'Disabled' 1
     Set-Reg $k 'DisabledByUser' 1
 }
-Get-Process WidgetService, PhoneExperienceHost, CrossDeviceExperienceHost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+if (-not $DryRun) { Get-Process WidgetService, PhoneExperienceHost, CrossDeviceExperienceHost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }
 Log '  Widgets, Phone Link, and Cross Device host stopped'
 
 # --- Ads / suggestions / consumer features ---
@@ -658,7 +767,9 @@ Log '  Start menu search: Bing/web/cloud results OFF, local search only'
 # and the taskbar entry is hidden. Start menu / app launching still work.
 $searchMarker = Join-Path $BakDir 'searchui-disabled.json'
 $killTaskName = 'SearchHost-Kill'
-if ($KeepSearchUI) {
+if ($DryRun) {
+    Log '  [DRY] search UI handling skipped (no task, rename or restore)' 'DarkGray'
+} elseif ($KeepSearchUI) {
     & schtasks.exe /Delete /TN $killTaskName /F 2>&1 | Out-Null
     if (Test-Path $searchMarker) {
         try {
@@ -709,7 +820,12 @@ if ($KeepSearchUI) {
     # 3. Kill any resident host, then rename the executable (undoable)
     Stop-Process -Name SearchHost -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 500
-    if ($searchExe -and (Test-Path ($searchExe + '.disabled'))) {
+    if ($searchExe -and (Test-Path ($searchExe + '.disabled')) -and (Test-Path $searchExe)) {
+        # Windows Update restored the executable: the .disabled copy is an orphan
+        Remove-Item ($searchExe + '.disabled') -Force -ErrorAction SilentlyContinue
+        Remove-Item $searchMarker -Force -ErrorAction SilentlyContinue
+        Log '  SearchHost.exe restored by an update - cleaned up leftover copy' 'DarkGray'
+    } elseif ($searchExe -and (Test-Path ($searchExe + '.disabled'))) {
         Log '  SearchHost.exe already disabled' 'DarkGray'
     } elseif ($searchExe -and (Test-Path $searchExe)) {
         try {
@@ -793,7 +909,8 @@ $existingTaskBak = @()
 if (Test-Path $taskBakFile) {
     try { $existingTaskBak = @(Get-Content $taskBakFile -Raw | ConvertFrom-Json) } catch { }
 }
-$tasksDisabledList = [System.Collections.Generic.List[string]]::new($existingTaskBak)
+$tasksDisabledList = [System.Collections.Generic.List[string]]::new()
+foreach ($bakTask in $existingTaskBak) { $tasksDisabledList.Add([string]$bakTask) }
 
 $taskOff = 0
 foreach ($t in $tasks) {
@@ -822,10 +939,25 @@ Log ('  {0} telemetry/junk scheduled tasks disabled' -f $taskOff)
 Section 'Windows Defender resource tuning'
 try {
     if (Get-Command Set-MpPreference -ErrorAction SilentlyContinue) {
+        # Back up current Defender preferences once so Revert can restore them
+        $mpBakFile = Join-Path $BakDir 'defender-preferences.json'
+        if (-not $DryRun -and -not (Test-Path $mpBakFile)) {
+            try {
+                $pref0 = Get-MpPreference
+                $mpSave = @{}
+                foreach ($n in 'EnableLowCpuPriority','ScanAvgCPULoadFactor','ScanScheduleDay','ScanScheduleTime',
+                               'DisableCatchupQuickScan','DisableCatchupFullScan',
+                               'DisableScanningMappedNetworkDrivesForFullScan','DisableScanningNetworkFiles') {
+                    if ($null -ne $pref0.$n) { $mpSave[$n] = $pref0.$n }
+                }
+                $mpSave | ConvertTo-Json | Set-Content -Path $mpBakFile -Encoding UTF8
+            } catch { }
+        }
         # Each setting is applied on its own: older Windows 10 builds (LTSC 2019)
         # do not know every parameter, and one unknown name must not stop the rest.
         function Set-MpSafe {
             param([string]$Name, $Value, [string]$Why)
+            if ($DryRun) { Log ('  [DRY] Set-MpPreference {0} = {1}' -f $Name, $Value) 'DarkGray'; return }
             $h = @{ $Name = $Value }
             try {
                 & Set-MpPreference @h -ErrorAction Stop
@@ -863,7 +995,9 @@ try {
                               (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows Advanced Threat Protection\Status\OnboardingInfo')
         } catch { }
         $sense = Get-CimInstance Win32_Service -Filter "Name='Sense'" -ErrorAction SilentlyContinue
-        if ($sense -and -not $senseOnboarded) {
+        if ($sense -and $DryRun) {
+            Log '  [DRY] Sense (Defender for Endpoint) would be disabled' 'DarkGray'
+        } elseif ($sense -and -not $senseOnboarded) {
             if (-not $svcOriginal.ContainsKey('Sense')) { $svcOriginal['Sense'] = [int](Get-SvcStartValue 'Sense') }
             Stop-Service -Name 'Sense' -Force -ErrorAction SilentlyContinue
             & sc.exe config Sense start= disabled 2>&1 | Out-Null
@@ -998,6 +1132,8 @@ if ($SkipDebloat) {
 Section 'Disk cleanup'
 if ($SkipCleanup) {
     Log '  Skipped (-SkipCleanup).'
+} elseif ($DryRun) {
+    Log '  Skipped (dry-run: no files deleted, Windows Update cache untouched).' 'DarkGray'
 } else {
     function Clear-Dir([string]$Path, [string]$Label) {
         if (-not (Test-Path $Path)) { Log ('  - {0}: not present' -f $Label) 'DarkGray'; return }
@@ -1063,7 +1199,7 @@ if ($SkipCleanup) {
     $ts = Get-Date -Format 'yyyyMMdd-HHmmss'
     if (Test-Path 'C:\Windows\SoftwareDistribution') { Rename-Item 'C:\Windows\SoftwareDistribution' "SoftwareDistribution.old-$ts" -Force -ErrorAction SilentlyContinue }
     if (Test-Path 'C:\Windows\System32\catroot2') { Rename-Item 'C:\Windows\System32\catroot2' "catroot2.old-$ts" -Force -ErrorAction SilentlyContinue }
-    foreach ($s in 'wuauserv','bits','cryptSvc') { Start-Service -Name $s -ErrorAction SilentlyContinue }
+    foreach ($s in 'wuauserv','bits','cryptSvc','msiserver','UsoSvc','WaaSMedicSvc') { Start-Service -Name $s -ErrorAction SilentlyContinue }
     Get-ChildItem 'C:\Windows' -Filter 'SoftwareDistribution.old-*' -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     Get-ChildItem 'C:\Windows\System32' -Filter 'catroot2.old-*' -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     Log '  - Windows Update cache reset done' 'Green'
@@ -1198,10 +1334,14 @@ if ($lanPresent) {
         if (-not $w) { continue }
         if (-not $svcOriginal.ContainsKey($svc)) { $svcOriginal[$svc] = [int](Get-SvcStartValue $svc) }
         $wantStart = if ($svc -in @('FDResPub','fdPHost')) { 2 } else { 3 }
-        if ((Get-SvcStartValue $svc) -ne $wantStart) {
-            & sc.exe config $svc start= $(if ($wantStart -eq 2) { 'auto' } else { 'demand' }) 2>&1 | Out-Null
+        if ($DryRun) {
+            Log ('  [DRY] KEEP {0} at start {1} (LAN discovery)' -f $svc, $wantStart) 'DarkGray'
+        } else {
+            if ((Get-SvcStartValue $svc) -ne $wantStart) {
+                & sc.exe config $svc start= $(if ($wantStart -eq 2) { 'auto' } else { 'demand' }) 2>&1 | Out-Null
+            }
+            if ($w.State -ne 'Running') { Start-Service -Name $svc -ErrorAction SilentlyContinue }
         }
-        if ($w.State -ne 'Running') { Start-Service -Name $svc -ErrorAction SilentlyContinue }
         $now = Get-Service -Name $svc -ErrorAction SilentlyContinue
         Log ('  KEEP  {0,-12} {1,-9} LAN discovery' -f $svc, $now.Status) 'Green'
     }
@@ -1365,14 +1505,18 @@ function Net([string]$cmd) {
     if ($out) { foreach ($l in $out) { if ($l -and $l -notmatch '^\s*$') { Log ('    {0}' -f $l.Trim()) 'DarkGray' } } }
 }
 
-Net 'netsh int tcp set global autotuninglevel=normal'
-Net 'netsh int tcp set global rss=enabled'
-Net 'netsh int tcp set global ecncapability=disabled'
-Net 'netsh int tcp set global timestamps=disabled'
-Net 'netsh int tcp set global netdma=disabled'
-Net 'netsh int tcp set global dca=enabled'
-Net 'netsh winhttp reset proxy'
-Net 'ipconfig /flushdns'
+if ($DryRun) {
+    Log '  [DRY] netsh interface / proxy / DNS-flush commands skipped' 'DarkGray'
+} else {
+    Net 'netsh int tcp set global autotuninglevel=normal'
+    Net 'netsh int tcp set global rss=enabled'
+    Net 'netsh int tcp set global ecncapability=disabled'
+    Net 'netsh int tcp set global timestamps=disabled'
+    Net 'netsh int tcp set global netdma=disabled'
+    Net 'netsh int tcp set global dca=enabled'
+    Net 'netsh winhttp reset proxy'
+    Net 'ipconfig /flushdns'
+}
 
 # --- Fastest DNS resolver (IP address is NEVER changed) -------------------
 # Probe well-known resolvers on TCP/53 and use the two fastest. The currently
@@ -1422,17 +1566,21 @@ if ($SkipDns) {
                 $final += $best
                 if (-not $DnsKeepLocalFirst) { $final += $local }
                 $final = @($final | Select-Object -Unique)
-                Set-DnsClientServerAddress -InterfaceIndex $nic.InterfaceIndex -ServerAddresses $final -ErrorAction Stop
-                Log ('  DNS on {0}: {1}  (IPv4 address untouched, local DNS kept as fallback)' -f $nic.Name, ($final -join ', ')) 'Green'
+                if ($DryRun) {
+                    Log ('  [DRY] DNS on {0}: {1}' -f $nic.Name, ($final -join ', ')) 'DarkGray'
+                } else {
+                    Set-DnsClientServerAddress -InterfaceIndex $nic.InterfaceIndex -ServerAddresses $final -ErrorAction Stop
+                    Log ('  DNS on {0}: {1}  (IPv4 address untouched, local DNS kept as fallback)' -f $nic.Name, ($final -join ', ')) 'Green'
+                }
             } catch {
                 Log ('  DNS tweak skipped for {0}: {1}' -f $nic.Name, $_.Exception.Message) 'DarkYellow'
             }
         }
-        if ($dnsBackup.Count -gt 0) {
+        if ($dnsBackup.Count -gt 0 -and -not $DryRun -and -not (Test-Path (Join-Path $BakDir 'dns-backup.json'))) {
             $dnsBackup | ConvertTo-Json -Depth 3 | Set-Content -Path (Join-Path $BakDir 'dns-backup.json') -Encoding UTF8
         }
         Log ('  Fastest resolvers: {0}' -f (($dnsRanks | Sort-Object Ms | Select-Object -First 3 | ForEach-Object { '{0}={1}ms' -f $_.IP, $_.Ms }) -join ', ')) 'DarkGray'
-        Net 'ipconfig /flushdns'
+        if (-not $DryRun) { Net 'ipconfig /flushdns' }
     }
 }
 
@@ -1458,14 +1606,18 @@ try {
 Log ('  Nagle disabled on {0} interface(s)' -f $nagleCount) 'Green'
 
 # NIC power saving off (fixes packet drops / random latency spikes)
-try {
-    Get-NetAdapter -Physical -ErrorAction Stop | ForEach-Object {
-        try { $pm = $_ | Get-NetAdapterPowerManagement -ErrorAction SilentlyContinue; if ($pm) { $pm.AllowComputerToTurnOffDevice = 'Disabled'; $pm | Set-NetAdapterPowerManagement -ErrorAction Stop } } catch { }
-        try { Set-NetAdapterAdvancedProperty -Name $_.Name -DisplayName 'Energy Efficient Ethernet' -DisplayValue 'Disabled' -ErrorAction Stop | Out-Null } catch { }
-        try { Disable-NetAdapterRsc -Name $_.Name -ErrorAction Stop | Out-Null } catch { }
-    }
-    Log '  NIC power saving off (all physical adapters)' 'Green'
-} catch { Log '  NIC power tweak skipped (cmdlet not available)' 'DarkYellow' }
+if ($DryRun) {
+    Log '  [DRY] NIC power saving tweaks skipped' 'DarkGray'
+} else {
+    try {
+        Get-NetAdapter -Physical -ErrorAction Stop | ForEach-Object {
+            try { $pm = $_ | Get-NetAdapterPowerManagement -ErrorAction SilentlyContinue; if ($pm) { $pm.AllowComputerToTurnOffDevice = 'Disabled'; $pm | Set-NetAdapterPowerManagement -ErrorAction Stop } } catch { }
+            try { Set-NetAdapterAdvancedProperty -Name $_.Name -DisplayName 'Energy Efficient Ethernet' -DisplayValue 'Disabled' -ErrorAction Stop | Out-Null } catch { }
+            try { Disable-NetAdapterRsc -Name $_.Name -ErrorAction Stop | Out-Null } catch { }
+        }
+        Log '  NIC power saving off (all physical adapters)' 'Green'
+    } catch { Log '  NIC power tweak skipped (cmdlet not available)' 'DarkYellow' }
+}
 
 # Delivery Optimization: no LAN peering, keep the LAN free for file transfers
 Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization' 'DODownloadMode' 0
@@ -1486,57 +1638,88 @@ if ($KeepSMB1) {
     } else {
         # Back up the SMB1 flag so Revert.ps1 can put it back
         $smbReg = 'HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
-        if (Test-Path ('HKLM:\' + $smbReg)) {
+        if (-not $DryRun -and (Test-Path ('HKLM:\' + $smbReg)) -and -not (Test-Path (Join-Path $BakDir 'smb1.reg'))) {
             & reg.exe export $smbReg (Join-Path $BakDir 'smb1.reg') /y 2>&1 | Out-Null
         }
-        try {
-            Set-SmbServerConfiguration -EnableSMB1Protocol $false -Force -ErrorAction Stop
-            Log '  SMB1 disabled, SMB2/3 enabled (LAN shares OK)' 'Green'
-        } catch { Log '  SMB configuration skipped' 'DarkYellow' }
+        if ($DryRun) {
+            Log '  [DRY] SMB1 would be disabled' 'DarkGray'
+        } else {
+            try {
+                Set-SmbServerConfiguration -EnableSMB1Protocol $false -Force -ErrorAction Stop
+                Log '  SMB1 disabled, SMB2/3 enabled (LAN shares OK)' 'Green'
+            } catch { Log '  SMB configuration skipped' 'DarkYellow' }
+        }
     }
 }
 
 # Keep network discovery and file sharing allowed for LAN transfers
-try {
-    Get-NetFirewallRule -DisplayGroup 'Network Discovery' -ErrorAction Stop | Enable-NetFirewallRule -ErrorAction SilentlyContinue
-    Get-NetFirewallRule -DisplayGroup 'File and Printer Sharing' -ErrorAction Stop | Enable-NetFirewallRule -ErrorAction SilentlyContinue
-    Log '  Firewall: Network Discovery + File Sharing allowed (LAN transfer)' 'Green'
-} catch { Log '  Firewall rule tweak skipped' 'DarkYellow' }
+if ($DryRun) {
+    Log '  [DRY] firewall rule changes skipped' 'DarkGray'
+} else {
+    try {
+        # Private/Domain profiles only: Public-profile rules stay off
+        Get-NetFirewallRule -DisplayGroup 'Network Discovery' -ErrorAction Stop |
+            Where-Object { $_.Profile -match 'Domain|Private' } | Enable-NetFirewallRule -ErrorAction SilentlyContinue
+        Get-NetFirewallRule -DisplayGroup 'File and Printer Sharing' -ErrorAction Stop |
+            Where-Object { $_.Profile -match 'Domain|Private' } | Enable-NetFirewallRule -ErrorAction SilentlyContinue
+        Log '  Firewall: Network Discovery + File Sharing allowed on Private/Domain (LAN transfer)' 'Green'
+    } catch { Log '  Firewall rule tweak skipped' 'DarkYellow' }
+}
 
 # ================================================================ 8. EXPLORER + ICON CACHE
 Section 'Icon / thumbnail cache + Explorer restart'
 try {
-    Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 3
+    if ($DryRun) {
+        Log '  [DRY] icon cache rebuild + Explorer restart skipped' 'DarkGray'
+    } else {
+        Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 3
 
-    $freed = 0
-    $cacheDirs = @(
-        "$env:LOCALAPPDATA\Microsoft\Windows\Explorer",
-        "$env:LOCALAPPDATA"
-    )
-    foreach ($cd in $cacheDirs) {
-        if (-not (Test-Path $cd)) { continue }
-        Get-ChildItem $cd -Force -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^(iconcache|thumbcache).*\.db$|^IconCache\.db$' } |
-            ForEach-Object {
-                try { $freed += $_.Length; Remove-Item $_.FullName -Force -ErrorAction Stop } catch { }
-            }
+        $freed = 0
+        $cacheDirs = @(
+            "$env:LOCALAPPDATA\Microsoft\Windows\Explorer",
+            "$env:LOCALAPPDATA"
+        )
+        foreach ($cd in $cacheDirs) {
+            if (-not (Test-Path $cd)) { continue }
+            Get-ChildItem $cd -Force -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^(iconcache|thumbcache).*\.db$|^IconCache\.db$' } |
+                ForEach-Object {
+                    try { $freed += $_.Length; Remove-Item $_.FullName -Force -ErrorAction Stop } catch { }
+                }
+        }
+        Log ('  Icon + thumbnail cache cleared ({0:N0} MB)' -f ($freed / 1MB)) 'Green'
+
+        if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer.exe }
+        Start-Sleep -Seconds 2
+        Log '  Explorer restarted (tweaks + fresh icons)' 'Green'
     }
-    Log ('  Icon + thumbnail cache cleared ({0:N0} MB)' -f ($freed / 1MB)) 'Green'
-
-    if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer.exe }
-    Start-Sleep -Seconds 2
-    Log '  Explorer restarted (tweaks + fresh icons)' 'Green'
 } catch { Log '  Explorer restart skipped' 'DarkYellow' }
 
 # ================================================================ 9. REVERT
 Section 'Backup + Revert script'
 
-$jsonPath = Join-Path $BakDir 'services-backup.json'
-$rows = @()
-foreach ($k in $svcOriginal.Keys) { $rows += [PSCustomObject]@{ Name = $k; Start = $svcOriginal[$k] } }
-$rows | ConvertTo-Json -Depth 3 | Set-Content -Path $jsonPath -Encoding UTF8
-Log ('  Service state saved: {0} entries -> {1}' -f $rows.Count, $jsonPath) 'Green'
+if ($DryRun) {
+    Log '  Dry-run: backups and Revert.ps1 left untouched (logs only).' 'DarkGray'
+} else {
+    $jsonPath = Join-Path $BakDir 'services-backup.json'
+    $rows = @()
+    foreach ($k in $svcOriginal.Keys) { $rows += [PSCustomObject]@{ Name = $k; Start = $svcOriginal[$k] } }
+    $rows | ConvertTo-Json -Depth 3 | Set-Content -Path $jsonPath -Encoding UTF8
+    Log ('  Service state saved: {0} entries -> {1}' -f $rows.Count, $jsonPath) 'Green'
+
+    # Keys this run created are remembered so Revert can delete them again
+    $createdFile = Join-Path $BakDir 'created-reg-paths.json'
+    $createdAll = [System.Collections.Generic.List[string]]::new()
+    if (Test-Path $createdFile) {
+        try { foreach ($c in @(Get-Content $createdFile -Raw | ConvertFrom-Json)) { if ($c) { $createdAll.Add([string]$c) } } } catch { }
+    }
+    foreach ($c in $script:CreatedRegPaths) { if (-not $createdAll.Contains($c)) { $createdAll.Add($c) } }
+    if ($createdAll.Count -gt 0) {
+        $createdAll | ConvertTo-Json | Set-Content -Path $createdFile -Encoding UTF8
+        Log ('  Created-key list saved: {0} entries' -f $createdAll.Count) 'Green'
+    }
+}
 
 $revert = @'
 # © Mayanktaker Computers & Web Development | https://mayanktaker.com
@@ -1583,6 +1766,21 @@ Get-ChildItem (Join-Path $root 'backup') -Filter '*.reg' -ErrorAction SilentlyCo
     RLog ("  imported {0}" -f $_.Name) 'Green'
 }
 
+# 2b. Registry keys the setup created (they were never exported)
+$createdJson = Join-Path $root 'backup\created-reg-paths.json'
+if (Test-Path $createdJson) {
+    try {
+        foreach ($c in @(Get-Content $createdJson -Raw | ConvertFrom-Json)) {
+            if ($c -and (Test-Path ('Registry::' + $c))) {
+                & reg.exe delete $c /f 2>&1 | Out-Null
+                RLog ("  removed created key: {0}" -f $c) 'Green'
+            }
+        }
+    } catch {
+        RLog ("  created-key removal failed: {0}" -f $_.Exception.Message) 'Yellow'
+    }
+}
+
 # 3. Power scheme & hibernation
 $pSchemeFile = Join-Path $root 'backup\power-scheme.txt'
 if (Test-Path $pSchemeFile) {
@@ -1590,11 +1788,39 @@ if (Test-Path $pSchemeFile) {
         $scheme = (Get-Content $pSchemeFile -Raw).Trim()
         if ($scheme) {
             & powercfg.exe /setactive $scheme 2>&1 | Out-Null
-            & powercfg.exe /h on 2>&1 | Out-Null
-            RLog ("  restored power scheme -> {0} (hibernation ON)" -f $scheme) 'Green'
+            RLog ("  restored power scheme -> {0}" -f $scheme) 'Green'
         }
     } catch {
         RLog ("  power scheme restore failed: {0}" -f $_.Exception.Message) 'Yellow'
+    }
+}
+
+# 3b. Hibernation: only re-enable if it was enabled before the setup ran
+$hibJson = Join-Path $root 'backup\hibernation-state.json'
+$hibWasOn = $false
+if (Test-Path $hibJson) {
+    try { $hibWasOn = ((Get-Content $hibJson -Raw | ConvertFrom-Json).HibernationOn -eq $true) } catch { }
+}
+if ($hibWasOn) {
+    & powercfg.exe /h on 2>&1 | Out-Null
+    RLog "  hibernation re-enabled (it was on before)" 'Green'
+} else {
+    RLog "  hibernation left off (it was off before)" 'DarkGray'
+}
+
+# 3c. Power schemes the setup created are removed again
+$createdScheme = Join-Path $root 'backup\power-created.txt'
+if (Test-Path $createdScheme) {
+    try {
+        $cg = (Get-Content $createdScheme -Raw).Trim()
+        $activeGuid = [regex]::Match(((powercfg /getactivescheme) -join ' '), '[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}').Value
+        if ($cg -and $cg -ne $activeGuid) {
+            & powercfg.exe /delete $cg 2>&1 | Out-Null
+            RLog ("  removed power scheme created by setup: {0}" -f $cg) 'Green'
+        }
+        Remove-Item $createdScheme -Force -ErrorAction SilentlyContinue
+    } catch {
+        RLog ("  created power scheme cleanup failed: {0}" -f $_.Exception.Message) 'Yellow'
     }
 }
 
@@ -1656,11 +1882,37 @@ if (Test-Path $marker) {
             Rename-Item -Path $disabled -NewName (Split-Path $original -Leaf) -Force -ErrorAction Stop
             & icacls.exe $original /setowner 'NT SERVICE\TrustedInstaller' 2>&1 | Out-Null
             RLog ("  restored {0}" -f $original) 'Green'
+        } elseif ((Test-Path $disabled) -and (Test-Path $original)) {
+            Remove-Item $disabled -Force -ErrorAction SilentlyContinue
+            RLog ("  removed orphaned disabled copy: {0}" -f $disabled) 'Green'
         }
         Remove-Item $marker -Force -ErrorAction SilentlyContinue
     } catch {
         RLog ("  SearchHost restore failed: {0}" -f $_.Exception.Message) 'Yellow'
     }
+}
+
+# 8. Defender preferences: restore the values saved before tuning
+$mpBak = Join-Path $root 'backup\defender-preferences.json'
+if (Get-Command Set-MpPreference -ErrorAction SilentlyContinue) {
+    if (Test-Path $mpBak) {
+        try {
+            $p = Get-Content $mpBak -Raw | ConvertFrom-Json
+            foreach ($prop in $p.PSObject.Properties) {
+                try {
+                    $h = @{ $prop.Name = $prop.Value }
+                    & Set-MpPreference @h -ErrorAction Stop
+                } catch { }
+            }
+            RLog "  Defender preferences restored" 'Green'
+        } catch {
+            RLog ("  Defender preference restore failed: {0}" -f $_.Exception.Message) 'Yellow'
+        }
+    } else {
+        RLog "  Defender preferences: no backup found (nothing to restore)" 'DarkGray'
+    }
+} else {
+    RLog "  Set-MpPreference not available - Defender preferences skipped" 'DarkGray'
 }
 
 RLog ''
@@ -1677,8 +1929,12 @@ $revertTargets = @(
     (Join-Path $Root 'Revert.ps1'),
     (Join-Path $ScriptDir 'Revert.ps1')
 )
-foreach ($rt in ($revertTargets | Select-Object -Unique)) {
-    try { Set-Content -Path $rt -Value $revert -Encoding UTF8; Log ('  Revert script: {0}' -f $rt) 'Green' } catch { }
+if ($DryRun) {
+    Log '  [DRY] Revert.ps1 regeneration skipped' 'DarkGray'
+} else {
+    foreach ($rt in ($revertTargets | Select-Object -Unique)) {
+        try { Set-Content -Path $rt -Value $revert -Encoding UTF8; Log ('  Revert script: {0}' -f $rt) 'Green' } catch { }
+    }
 }
 
 # ================================================================ 10. SUMMARY

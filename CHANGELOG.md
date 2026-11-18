@@ -2,6 +2,22 @@
 
 # Changelog
 
+## [1.7.1]
+
+### What's new
+- Windows 11 power settings stay usable: the script no longer leaves duplicate Ultimate Performance schemes behind (older copies are cleaned up), never activates the raw hidden template scheme, and keeps the current scheme untouched on Modern Standby (S0) systems where legacy plans break the Settings power page.
+- Dry-run is now truly non-destructive: power, disk cleanup, network, DNS, SMB1, firewall, Defender, restore-point and search-UI steps are skipped instead of executed.
+- Revert is now complete: registry keys the script created are deleted, missing `.reg` backups were added (Fast Startup, priority control, Nagle interfaces, CloudContent and more), Defender scan preferences are restored, hibernation is only re-enabled if it was on before, and power schemes created by the setup are removed.
+
+### Bug fixes
+- Backups are now first-run snapshots: re-runs (and `-DryRun`) no longer overwrite the original registry, power-scheme, hibernation, SMB1 and DNS backups, so Revert always restores the true pre-setup state. Delete the `backup` folder to re-baseline on purpose.
+- Fixed a `Cannot find an overload for "new"` error that stopped the scheduled-task backup from ever being written.
+- `NetworkThrottlingIndex` is now written as `0xffffffff` so it applies reliably, and the audit check accepts both registry readback forms.
+- Firewall rules are enabled only for Private/Domain profiles; Public-profile rules stay off.
+- SearchHost: if a Windows update restored the executable, the leftover `.disabled` copy is cleaned up on re-run and on revert.
+
+---
+
 ## [1.7.0]
 
 ### What's new

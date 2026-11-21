@@ -396,6 +396,9 @@ Full copy-paste instructions are in **[`RUN-COMMANDS.txt`](RUN-COMMANDS.txt)**.
 - **`-DeepComponentCleanup` uses `/ResetBase`** — installed Windows updates can no longer be uninstalled afterwards.
 - **Public DNS is not always best for local names.** The original DNS is kept as fallback; use `-DnsKeepLocalFirst` if your LAN relies on it.
 - **Re-runs are safe but not magical**: cleanup and WU cache reset run again, so the second run usually frees much less space.
+- **Duplicate power schemes are cleaned up by name.** Leftover "Ultimate Performance" copies from older script versions are deleted, so a custom scheme you named "Ultimate…" could be removed too. Keep it active before running, or rename it to something else.
+- **Hibernation state is a first-run snapshot.** If an older version already turned hibernation off before you upgraded, Revert cannot know it was originally on — it will leave hibernation off. Enable it manually afterwards if you need it.
+- **Elevation uses the admin account's HKCU.** If you run as a standard user and elevate with different admin credentials, per-user tweaks and their backups land in that admin account's profile, not yours. Use your own admin account for consistent results.
 - **Store apps removed are not auto-reinstalled** on revert.
 - **Always keep a backup of important data.** The script does not touch personal files, but no system tweak is risk-free.
 

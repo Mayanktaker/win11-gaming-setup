@@ -13,7 +13,8 @@
     Widgets, Copilot, Recall, Click to Do, Store apps on LTSC) is safely skipped
     with a log line instead of failing.
 
-      1.  UI / Explorer responsiveness (classic context menu, no animations)
+      1.  UI / Explorer responsiveness (no animations; classic menu only
+          with -ClassicContextMenu)
       2.  Power plan + PCIe ASPM off + sleep never (gaming profile)
       3.  Gaming registry tweaks (GameDVR off, Game Mode on, MMCSS, throttling off)
       4.  Background junk off (Copilot, Widgets, Phone Link, ads, telemetry tasks)
@@ -71,10 +72,22 @@
     Do not disable SMB1. Only needed for very old NAS boxes or Windows XP
     devices that cannot speak SMB2/3. SMB1 is otherwise disabled for security.
 
+.PARAMETER DisableSearchUI
+    Fully disable the search UI: taskbar entry hidden, SearchHost.exe renamed
+    and a logon cleanup task installed (~250 MB of RAM with its WebView2
+    renderer tree). Off by default since v1.8.0 - the search UI is left
+    completely untouched unless you pass this flag. Start menu and app
+    launching still work without it.
+
+.PARAMETER ClassicContextMenu
+    Replace the Windows 11 WinUI right-click menu with the classic full menu.
+    Off by default since v1.8.0 - the Windows 11 right-click menu is left
+    untouched unless you pass this flag.
+
 .PARAMETER KeepSearchUI
-    Keep the Windows 11 Start-menu search UI (SearchHost + its WebView2 tree).
-    By default it is fully disabled: icon hidden, host renamed and a logon
-    cleanup task installed. Start menu and app launching still work.
+    Deprecated no-op: the search UI is kept by default since v1.8.0.
+    The flag is still accepted so old commands keep working; pass
+    -DisableSearchUI if you actually want the search UI removed.
 
 .PARAMETER KeepCopilot
     Do not disable Windows Copilot or the standalone Copilot app.
@@ -109,7 +122,7 @@
     Revert : .\Revert.ps1 (next to this script) or C:\ProgramData\Win11GamingSetup\Revert.ps1
     Logs   : C:\ProgramData\Win11GamingSetup\logs
     Backup : C:\ProgramData\Win11GamingSetup\backup
-    Version: 1.7.1
+    Version: 1.8.0
 #>
 
 [CmdletBinding()]
@@ -128,6 +141,8 @@ param(
     [switch]$KeepDefenderDailyScan,
     [switch]$NoLAN,
     [switch]$KeepSMB1,
+    [switch]$DisableSearchUI,
+    [switch]$ClassicContextMenu,
     [switch]$KeepSearchUI,
     [switch]$KeepCopilot,
     [switch]$KeepNotifications,
@@ -141,7 +156,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
-$ScriptVersion = '1.7.1'
+$ScriptVersion = '1.8.0'
 
 # ---------------------------------------------------------------- self-elevate
 if (-not $ElevatedChild) {
@@ -244,6 +259,7 @@ Log 'Created by Mayanktaker Computers & Web Development' 'Cyan'
 Log ('Log: {0}' -f $script:LogFile) 'DarkGray'
 Log ('Logs.txt: {0}' -f $script:LogTxtLocal) 'DarkGray'
 if ($DryRun) { Log '  *** DRY-RUN MODE: no changes will be made ***' 'Yellow' }
+if ($KeepSearchUI) { Log '  Note: -KeepSearchUI is deprecated (the search UI is kept by default now)' 'DarkGray' }
 
 $os = Get-CimInstance Win32_OperatingSystem
 $cs = Get-CimInstance Win32_ComputerSystem
@@ -479,9 +495,9 @@ Log ('  {0} registry keys backed up -> {1}' -f $okBackups, $BakDir) 'Green'
 # ================================================================ 1. UI / EXPLORER
 Section 'Explorer / UI responsiveness'
 
-# Replace the slow Windows 11 WinUI context menu with the classic one.
-# Windows 10 already ships the classic menu, so this is skipped there.
-if ($IsWin11) {
+# Classic right-click menu is opt-in since v1.8.0 (-ClassicContextMenu).
+# Windows 10 already ships the classic menu, so it is never needed there.
+if ($ClassicContextMenu -and $IsWin11) {
     $clsid = 'HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32'
     $clsidParent = 'HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}'
     if ($DryRun) {
@@ -493,8 +509,10 @@ if ($IsWin11) {
         }
         if (-not (Test-Path $clsid)) { New-Item -Path $clsid -Force | Out-Null }
         Set-ItemProperty -Path $clsid -Name '(default)' -Value '' -ErrorAction SilentlyContinue
-        Log '  Classic right-click menu enabled'
+        Log '  Classic right-click menu enabled (-ClassicContextMenu)'
     }
+} elseif ($IsWin11) {
+    Log '  Right-click menu kept (default; pass -ClassicContextMenu to switch)' 'DarkGray'
 } else {
     Log '  Windows 10 - classic right-click menu already present, skipped' 'DarkGray'
 }
@@ -760,38 +778,17 @@ Set-Reg $searchCu 'SearchboxTaskbarMode' 1
 Set-Reg 'HKCU:\Software\Policies\Microsoft\Windows\Explorer' 'DisableSearchBoxSuggestions' 1
 Log '  Start menu search: Bing/web/cloud results OFF, local search only'
 
-# --- Fully disable the search UI unless the user opts out -----------------
+# --- Search UI is KEPT by default; -DisableSearchUI removes it -------------
 # On Windows 11 the search UI is SearchHost.exe plus an Edge WebView2 tree
-# (~250 MB). Hiding the icon alone is not enough: the host still preloads.
-# The host is renamed (undoable), a logon task removes any resident copy,
-# and the taskbar entry is hidden. Start menu / app launching still work.
+# (~250 MB). Removal is opt-in since v1.8.0: the host is renamed (undoable),
+# a logon task removes any resident copy, and the taskbar entry is hidden.
+# Start menu / app launching still work. Without the flag we only undo any
+# removal an older script version performed.
 $searchMarker = Join-Path $BakDir 'searchui-disabled.json'
 $killTaskName = 'SearchHost-Kill'
 if ($DryRun) {
     Log '  [DRY] search UI handling skipped (no task, rename or restore)' 'DarkGray'
-} elseif ($KeepSearchUI) {
-    & schtasks.exe /Delete /TN $killTaskName /F 2>&1 | Out-Null
-    if (Test-Path $searchMarker) {
-        try {
-            $m = Get-Content $searchMarker -Raw | ConvertFrom-Json
-            $disabled = $m.DisabledPath
-            $original = $m.OriginalPath
-            if ((Test-Path $disabled) -and -not (Test-Path $original)) {
-                & takeown.exe /f $disabled 2>&1 | Out-Null
-                & icacls.exe $disabled /grant '*S-1-5-32-544:F' 2>&1 | Out-Null
-                Rename-Item -Path $disabled -NewName (Split-Path $original -Leaf) -Force -ErrorAction Stop
-                & icacls.exe $original /setowner 'NT SERVICE\TrustedInstaller' 2>&1 | Out-Null
-                Log '  SearchHost.exe restored (name + owner)' 'Green'
-            }
-            Remove-Item $searchMarker -Force -ErrorAction SilentlyContinue
-        } catch {
-            Log ('  SearchHost restore failed: {0}' -f $_.Exception.Message) 'DarkYellow'
-        }
-    }
-    Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' 'SearchboxTaskbarMode' 1
-    Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'SearchboxTaskbarMode' 1
-    Log '  Search UI kept (-KeepSearchUI)' 'DarkGray'
-} else {
+} elseif ($DisableSearchUI) {
     # 1. Hide the taskbar search entry on both Windows 10 and Windows 11
     Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' 'SearchboxTaskbarMode' 0
     Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'SearchboxTaskbarMode' 0
@@ -858,6 +855,30 @@ Stop-Process -Name SearchHost -Force -ErrorAction SilentlyContinue
     $tr = 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}"' -f $killerPath
     & schtasks.exe /Create /TN $killTaskName /TR $tr /SC ONLOGON /DELAY 0000:15 /RL HIGHEST /RU SYSTEM /F 2>&1 | Out-Null
     Log '  Search UI fully disabled; logon task SearchHost-Kill installed' 'Green'
+} else {
+    # Default: search stays untouched. Only undo an older version's removal.
+    & schtasks.exe /Delete /TN $killTaskName /F 2>&1 | Out-Null
+    if (Test-Path $searchMarker) {
+        try {
+            $m = Get-Content $searchMarker -Raw | ConvertFrom-Json
+            $disabled = $m.DisabledPath
+            $original = $m.OriginalPath
+            if ((Test-Path $disabled) -and -not (Test-Path $original)) {
+                & takeown.exe /f $disabled 2>&1 | Out-Null
+                & icacls.exe $disabled /grant '*S-1-5-32-544:F' 2>&1 | Out-Null
+                Rename-Item -Path $disabled -NewName (Split-Path $original -Leaf) -Force -ErrorAction Stop
+                & icacls.exe $original /setowner 'NT SERVICE\TrustedInstaller' 2>&1 | Out-Null
+                Log '  SearchHost.exe restored (name + owner)' 'Green'
+            }
+            Remove-Item $searchMarker -Force -ErrorAction SilentlyContinue
+        } catch {
+            Log ('  SearchHost restore failed: {0}' -f $_.Exception.Message) 'DarkYellow'
+        }
+        # Restore the taskbar entry an older version hid
+        Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' 'SearchboxTaskbarMode' 1
+        Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'SearchboxTaskbarMode' 1
+    }
+    Log '  Search UI kept (default; pass -DisableSearchUI to remove it)' 'DarkGray'
 }
 
 # --- Windows 10 extras (the keys are harmless on Windows 11) ---

@@ -62,7 +62,7 @@ Doing all the fixes by hand means 50+ registry edits, service changes and cleanu
 |---|---|
 | The PC is mainly for gaming | You print often → add `-KeepPrintSpooler` |
 | You transfer files over LAN (Windows/Linux shares) | You search file contents all day → add `-KeepWindowsSearch` |
-| You want less background noise and faster Explorer | You need web answers from the Start search box → add `-KeepSearchUI` |
+| You want less background noise and faster Explorer | You rely on the Start-menu search UI daily — it is kept by default; just do **not** pass `-DisableSearchUI` |
 | You reinstall Windows often and want the same setup every time | It is a corporate / managed work PC |
 | You are comfortable with a UAC prompt and a reboot | You do not have a backup of important files |
 
@@ -78,7 +78,7 @@ From the test machine: **i5-2500K, 12 GB DDR3-1333, GTX 750 Ti 2 GB, Windows 11 
 | Store apps | 19 removed | Photos, Snipping Tool, Solitaire, Media Player kept |
 | Service settings | ~51–53 applied, 36+ disabled | Plus a hardware-aware keep list |
 | Telemetry tasks | 13 disabled | Re-runs report 0 because they are already off |
-| Search UI memory | ~250 MB → **0 MB at idle** | Host + its WebView2 renderer tree |
+| Search UI memory | ~250 MB → **0 MB at idle** (only with `-DisableSearchUI`) | Host + its WebView2 renderer tree |
 | DNS resolution | fastest servers chosen (~15 ms) | IP address untouched |
 | Defender scan CPU cap | 50 % → 10 % | Real-time protection stays on |
 
@@ -109,7 +109,7 @@ This is not a blind "disable everything" script. Every risky change is guarded b
 
 | What is detected | How | Decision |
 |---|---|---|
-| **OS family** | Build number (22000 = Windows 11) | Win11-only tweaks (classic context menu) skipped on Windows 10 / LTSC |
+| Win11-only tweaks | Build number (22000 = Windows 11) | Classic context menu and other Windows 11-only tweaks are skipped on Windows 10 / LTSC |
 | **LTSC / IoT edition** | Caption + SKU | Debloat summary explains that Store apps are normally absent |
 | **WiFi / Bluetooth / camera / scanner / fingerprint / touch** | PnP and network adapter queries | Their services are only disabled when the hardware is *missing* |
 | **System disk type** | `Get-PhysicalDisk.MediaType` | `SysMain` (Superfetch) off on SSD, kept on HDD where prefetch helps |
@@ -129,7 +129,7 @@ This is not a blind "disable everything" script. Every risky change is guarded b
 
 | Change | Why | Effect |
 |---|---|---|
-| Classic right-click menu (Win11 only) | The WinUI menu is noticeably slow on older CPUs | Context menu opens immediately |
+| Classic right-click menu (Win11, opt-in: `-ClassicContextMenu`) | The WinUI menu is noticeably slow on older CPUs | Context menu opens immediately |
 | `MenuShowDelay = 20 ms` | Default is 400 ms | Menus feel instant |
 | Animations, transparency, list-view shadows off | Each costs GPU/CPU work on weak integrated graphics | Snappier Explorer, no visual lag |
 | Copilot button / taskbar widgets hidden | Pure background noise | Cleaner taskbar |
@@ -162,16 +162,15 @@ This is not a blind "disable everything" script. Every risky change is guarded b
 | 13 telemetry / diagnostics tasks disabled | Needless scheduled wake-ups | Less background disk activity |
 | Activity history, News feed, Meet Now off (Win10) | Cloud upload and taskbar feed | Less telemetry and network noise |
 
-### 5. Start menu search — fully disabled by default
+### 5. Start menu search — web results off, UI kept by default
 
 | Change | Why | Effect |
 |---|---|---|
-| Web / Bing / cloud results off | Web lookups spawn an Edge renderer in the search UI | No search-related network calls |
-| Taskbar search icon hidden | You do not use it | Cleaner taskbar |
-| `SearchHost.exe` renamed to `.disabled` | Hiding the icon alone does **not** stop the host from preloading | ~250 MB RAM + 6 WebView2 processes gone |
-| Logon task `SearchHost-Kill` | A feature update can restore the executable | Any resident copy is removed after login |
+| Web / Bing / cloud results off | Web lookups spawn an Edge renderer in the search UI | No search-related network calls; search stays local |
+| Search UI removal (opt-in: `-DisableSearchUI`) | The host preloads Edge's WebView2 renderer even when idle | ~250 MB RAM + 6 WebView2 processes gone, taskbar entry hidden |
+| Logon task `SearchHost-Kill` (with `-DisableSearchUI`) | A feature update can restore the executable | Any resident copy is removed after login |
 
-> 📌 The Start menu itself still opens and launches apps — only *searching* is unavailable. `-KeepSearchUI` keeps it, and `Revert.ps1` fully restores it.
+> 📌 Since v1.8.0 the search UI is **kept by default** — nothing is hidden, renamed or killed unless you pass `-DisableSearchUI`. Running the new version also automatically undoes a removal done by an older script version. The Start menu, search and app launching always keep working.
 
 ### 6. Windows Defender tuning (not disabling)
 
@@ -244,7 +243,9 @@ See [Revert](#-revert--undo-everything).
 | `-KeepPrintSpooler` | Keep printing enabled |
 | `-KeepWindowsSearch` | Keep the search indexer (`WSearch`) |
 | `-KeepDefenderDailyScan` | Keep a daily Defender scan at 03:00 |
-| `-KeepSearchUI` | Keep the Start-menu search UI (default: fully disabled) |
+| `-DisableSearchUI` | Fully remove the search UI (taskbar entry, `SearchHost.exe`, logon cleanup task). Default: search is kept untouched |
+| `-ClassicContextMenu` | Use the classic right-click menu on Windows 11. Default: the Windows 11 menu is kept |
+| `-KeepSearchUI` | Deprecated no-op (search is kept by default since v1.8.0); accepted so old commands still run |
 | `-KeepCopilot` | Keep Windows Copilot and the Copilot app |
 | `-KeepNotifications` | Keep push notification services (`WpnService`, `WpnUserService`) for apps like Discord/Slack/Telegram |
 | `-EnableHAGS` | Enable Hardware-Accelerated GPU Scheduling (reduces latency on modern GPUs) |
@@ -268,8 +269,11 @@ Examples:
 # Print from this PC
 .\Win11-Gaming-Setup.ps1 -KeepPrintSpooler
 
-# Need file-content search and the search box
-.\Win11-Gaming-Setup.ps1 -KeepWindowsSearch -KeepSearchUI
+# Need file-content search (WSearch indexing)
+.\Win11-Gaming-Setup.ps1 -KeepWindowsSearch
+
+# Maximum reclaim: also remove the search UI and use the classic menu
+.\Win11-Gaming-Setup.ps1 -DisableSearchUI -ClassicContextMenu
 
 # Maximum disk reclaim
 .\Win11-Gaming-Setup.ps1 -EmptyRecycleBin -DeepComponentCleanup
@@ -329,10 +333,10 @@ Build detection means the script works on Windows 11, Windows 10 and LTSC / IoT 
 
 | Area | Windows 11 | Windows 10 / LTSC |
 |---|---|---|
-| Classic context menu | applied | skipped (already the default) |
+| Classic context menu | opt-in (`-ClassicContextMenu`) | skipped (already the default) |
 | Widgets / Copilot / Phone Link | policies written | written, ignored if absent |
 | Store app debloat | 19 apps | usually "No removable Store apps found" — normal on LTSC |
-| Search UI | host renamed + logon task | `SearchHost.exe` usually absent — skipped |
+| Search UI | removal opt-in (`-DisableSearchUI`) | `SearchHost.exe` usually absent — skipped |
 | Search / web results | off | off (works on both) |
 | Timeline, News feed, Meet Now | not present | off |
 | Defender tuning | full parameter set | unsupported parameters skipped individually; unused `Sense` disabled without MDE onboarding |
@@ -343,7 +347,7 @@ Build detection means the script works on Windows 11, Windows 10 and LTSC / IoT 
 ## ✅ Verify it worked
 
 ```powershell
-# Search should be gone
+# With -DisableSearchUI: search should be gone (otherwise SearchHost runs normally)
 Get-Process SearchHost,msedgewebview2 -ErrorAction SilentlyContinue
 Test-Path 'C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe.disabled'
 
@@ -374,7 +378,7 @@ Full copy-paste instructions are in **[`RUN-COMMANDS.txt`](RUN-COMMANDS.txt)**.
 | "Access is denied" / nothing changes | Close the window, open PowerShell as Administrator, run again |
 | Restore point step fails | System Restore is off on that PC — add `-SkipRestorePoint` |
 | Other PCs not visible in Explorer → Network | Ensure the network profile is `Private`, LAN is connected at run time, and re-run without `-NoLAN` |
-| Search still appears | A feature update restored the host — re-run the script (the logon task also removes it), or check that you did not pass `-KeepSearchUI` |
+| Search UI is missing / cannot search from the taskbar | An older script version or `-DisableSearchUI` removed it — run the script again **without** the flag (it auto-restores SearchHost), or use `Revert.ps1` |
 | Some registry lines show "unauthorized operation" | Windows protects a few policy keys even from an elevated user; those tweaks are cosmetic and harmless |
 | File-content search no longer works | Expected: `WSearch` is off. Re-enable with `-KeepWindowsSearch` or `Revert.ps1` |
 | Printing stopped | Expected: `Spooler` is off. Add `-KeepPrintSpooler` and re-run |
@@ -385,7 +389,7 @@ Full copy-paste instructions are in **[`RUN-COMMANDS.txt`](RUN-COMMANDS.txt)**.
 ## ⚠️ Honest limitations (read this before believing the hype)
 
 - **No FPS is guaranteed.** The script removes overhead; it cannot make an i5-2500K into a modern CPU.
-- **Search is completely disabled by default.** The Start menu still works, but typing a search query returns nothing. `-KeepSearchUI` opts out.
+- **The search UI is kept by default** (since v1.8.0). Only `-DisableSearchUI` removes it — that also removes taskbar search until restored. The search indexer (`WSearch`) is a separate switch (`-KeepWindowsSearch`).
 - **Renaming a system executable is a deliberate, invasive tweak.** Windows feature updates can restore it; the logon task handles that, but the method is a trade-off, not an official Microsoft setting.
 - **Defender's ~200 MB is mostly baseline AV memory.** The script lowers CPU cost and removes the unused Endpoint agent; it does not (and should not) turn real-time protection off.
 - **Disabling `WSearch` makes file-content search slower**, and disabling `Spooler` stops all printing until re-enabled.

@@ -3,7 +3,7 @@
 # AGENTS.md — Operating Map
 
 ## Environment
-- **Project:** win11-gaming-setup (v1.7.1)
+- **Project:** win11-gaming-setup (v1.8.0)
 - **Target OS:** Windows 11 (21H2 through 26H2+ / build 27000+), Windows 10 (Home, Pro, Enterprise 22H2 build 19045, incl. LTSC 2019/2021/2024 / IoT LTSC)
 - **Runtime:** PowerShell 5.1+ / PowerShell Core 7+
 - **Privilege Requirement:** Elevated (Administrator / UAC self-elevating)

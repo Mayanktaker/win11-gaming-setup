@@ -110,15 +110,18 @@ this step PowerShell may refuse to run the script.
   network profile is Private, then try  \\<ip-address>  directly to confirm
   file sharing itself works.
 
-  Check the search UI is gone (no SearchHost / no Edge renderer processes):
+  Check the search UI state (with -DisableSearchUI it should be gone;
+  by default SearchHost runs untouched):
 
       Get-Process SearchHost,msedgewebview2 -ErrorAction SilentlyContinue
       Test-Path 'C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe.disabled'
       Get-Content 'C:\ProgramData\Win11GamingSetup\backup\searchui-disabled.json'
 
-  By default the taskbar search icon is hidden, SearchHost.exe is renamed to
-  .disabled and a logon task kills any copy Windows restores. Win still opens
-  Start; search queries are not available. Use -KeepSearchUI to restore it.
+  By default (v1.8.0+) the taskbar search UI is kept completely untouched.
+  Only with -DisableSearchUI the taskbar search entry is hidden, SearchHost.exe
+  is renamed to .disabled and a logon task kills any copy Windows restores.
+  Start menu and app launching keep working either way. Running the script
+  again without the flag automatically restores a removed search UI.
 
   Check Defender is still protecting you (real-time should be True):
 
@@ -149,7 +152,11 @@ this step PowerShell may refuse to run the script.
   -KeepPrintSpooler         keep printing enabled
   -KeepWindowsSearch        keep the search indexer (WSearch)
   -KeepDefenderDailyScan    keep a daily Defender scan at 03:00
-  -KeepSearchUI             keep the Start-menu search UI (default: fully disabled)
+  -DisableSearchUI          fully remove the search UI (default since v1.8.0:
+                            search is kept untouched)
+  -ClassicContextMenu       classic right-click menu on Windows 11 (default:
+                            Windows 11 menu kept)
+  -KeepSearchUI             deprecated no-op (search is kept by default now)
   -KeepCopilot              keep Copilot and standalone Copilot app
   -KeepNotifications        keep push notification services (Discord/Slack/Telegram)
   -EnableHAGS               enable Hardware-Accelerated GPU Scheduling (modern GPUs)
@@ -191,7 +198,8 @@ this step PowerShell may refuse to run the script.
 
   * LTSC has no Microsoft Store and almost no consumer apps, so the debloat
     step usually reports "No removable Store apps found". That is expected.
-  * The Windows 11 classic context menu tweak is skipped automatically.
+  * The Windows 11 classic context menu tweak only runs with
+    -ClassicContextMenu; on Windows 10 / LTSC it is never needed.
   * Widgets, Copilot, News and Interests and the Win11 search UI do not exist
     on LTSC 2019; the related policies are written anyway and simply ignored.
   * Windows 10 extras that do apply are applied: Timeline / Activity history

@@ -2,6 +2,17 @@
 
 # Changelog
 
+## [1.8.0]
+
+### What's new
+- **Search UI stays on by default.** The full removal (taskbar entry hidden, `SearchHost.exe` renamed, logon cleanup task) is now opt-in with `-DisableSearchUI`. Running this version also **automatically restores** a search UI that an older script version removed.
+- **Right-click menu stays untouched by default.** The classic Windows 10-style menu on Windows 11 is now opt-in with `-ClassicContextMenu`.
+
+### Notes
+- `-KeepSearchUI` is now a deprecated no-op (search is kept by default); old commands using it still run fine.
+
+---
+
 ## [1.7.1]
 
 ### What's new
